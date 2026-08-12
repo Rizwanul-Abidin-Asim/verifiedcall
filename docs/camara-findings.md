@@ -114,8 +114,20 @@ as evidence. Replaced by Call Forwarding Signal.
 unknown path → 404 {"message":"Endpoint '/x' does not exist"}
 ```
 
-These let us exercise the `fallback.py` path with a **real** failure rather than a mock.
-Use `+99999990500` in the demo to show honest degradation live.
+**Confirmed 2026-08-12: `+99999990500` returns 500 on all four APIs simultaneously**, not
+just Location Verification. That is a full-outage rehearsal on demand — use it in the demo
+to show honest degradation live.
+
+## Notes from running the real client layer
+
+- **`/call-forwardings` returns `["inactive"]`, not `[]`,** when nothing is forwarding.
+  Treat the list as informational; `active` from the unconditional endpoint is the
+  authoritative boolean.
+- `/check` does not return `latestSimChange` — only `/retrieve-date` does. Call both if
+  the decision needs the age of the swap rather than just its existence.
+- **Cold connection costs ~800–1300ms; warm is ~250–300ms.** All four issued concurrently:
+  **541ms warm**, 1320ms cold. Warm the shared client at app startup before the demo, and
+  quote the warm figure as the added-latency metric.
 
 ---
 
