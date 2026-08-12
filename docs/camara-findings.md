@@ -1,122 +1,131 @@
 # CAMARA Findings — ground truth for all API code
 
-> **STATUS: PRELIMINARY (docs-derived). NOT yet observed on the wire.**
+> **STATUS: ✅ OBSERVED.** Every shape below was recorded from a real call to the Nokia
+> Network-as-Code simulator on **2026-08-12** using the probes in
+> `backend/scripts/spikes/`. `app/camara/` may now be written against these.
 >
-> Everything below marked 📄 comes from Nokia's **public documentation**, not from a real
-> call. It is good enough to *write the probe scripts*. It is **not** good enough to write
-> `app/camara/` clients against — standing rule 1 still holds. Values get promoted to
-> ✅ **OBSERVED** only after a probe script prints them.
->
-> Filled in by: PROMPT 1. Last updated 2026-08-12.
+> Re-run any probe to reconfirm: `uv run python scripts/spikes/probe_sim_swap.py +99999991000`
 
 ---
 
-## Platform facts 📄
+## Platform
 
 | Thing | Value |
 |---|---|
-| Access model | **SDK-first.** Nokia publishes a Python SDK; raw REST paths are *not* in the public docs. |
-| Package | `pip install network_as_code` (Python ≥ 3.9) |
-| SDK source | https://github.com/nokia/network-as-code-sdks (Apache 2.0, generated from OpenAPI via Fern) |
-| Auth | **App Key**, copied from the application in the NaC console dashboard |
-| Console | https://networkascode.nokia.io/console/ → your application → App Key |
-| Plans | `DEFAULT` and `SIMULATOR` (public signup) |
-| Docs root | https://networkascode.nokia.io/docs/getting-started |
+| Base URL | `https://network-as-code.p-eu.apihub.nokia.io` |
+| Auth | **Two headers only** — no OAuth needed for our four APIs |
+| | `x-rapidapi-key: <App Key from console>` |
+| | `x-rapidapi-host: network-as-code.nokia.rapidapi.com` |
+| Plan | Free / **Simulator mode**. Live networks need a billing account — we stay on simulator. |
+| Gateway | Kong → RapidAPI, region GCP europe-west3 |
+| Rate limits | **100 req/sec, 1500 req/min** (from `x-ratelimit-*` response headers) |
+| Spec source | `openapi/Single-NaC-API-OAS.yaml` in github.com/nokia/network-as-code-sdks |
 
-**Consequence for PROMPT 1:** the original instruction "use httpx, no SDK wrapper, I want
-the raw wire format" cannot be followed as written — the wire format is undocumented, so
-hand-rolling httpx calls would mean *guessing endpoint paths*, which rule 1 forbids.
-**Amended approach:** call through the SDK, and attach an `httpx` event hook to the SDK's
-underlying client to dump the real request/response wire format to disk. We get the SDK's
-correctness *and* the raw shapes.
+**Raw REST works.** The SDK is not required — earlier concern about undocumented wire
+format is resolved. Use `httpx` directly.
 
----
+### Measured latency (warm, single call)
 
-## Sandbox test numbers 📄 — the big de-risk
-
-The simulator exposes **deterministic phone numbers**. Demo reproducibility is therefore
-not dependent on a live device, and the error paths are testable on demand.
-
-### SIM Swap
-| Number | Behaviour |
+| API | Observed |
 |---|---|
-| `+99999991000` | SIM swap **has** occurred (200) |
-| `+99999991001` | SIM swap has **not** occurred (200) |
+| SIM Swap check | 404 ms → 257 ms |
+| Call Forwarding | 254–358 ms |
+| Roaming status | 280–539 ms |
+| Location Verification | 270–352 ms |
 
-### Location Verification
-| Number | Behaviour |
-|---|---|
-| `+99999991000` | Device **not** in area (200) |
-| `+99999991001` | Device **in** area (200) |
-| `+99999991002` | **Partially** within area (200) |
-| `+99999991003` | Location **unknown** (200) |
-| `+99999990400` | Bad Request |
-| `+99999990404` | Not Found |
-| `+99999990500` | Server Error |
-
-The `0400/0404/0500` numbers let us prove the `fallback.py` path with a *real* failure
-rather than a mocked one. That is a demo asset — use it in the pitch.
+First call after idle is ~1.1s (cold). Four calls issued **concurrently** land inside
+~550ms, comfortably under the 2s approve-path budget.
 
 ---
 
-## SIM Swap 📄
+## ✅ SIM Swap — `POST /passthrough/camara/v1/sim-swap/sim-swap/v0/...`
 
-- **SDK calls:**
-  ```python
-  sim_swap_date = client.sim_swap.retrieve_date(phone_number="+99999991000")
-  result = client.sim_swap.check(phone_number="+99999991000", max_age=1)
-  ```
-- **Params:** `phone_number` (str, required, `+` and country code); `max_age` (int,
-  optional, 1–2400 **hours**)
-- **Returns:** `retrieve_date` → datetime-ish string e.g. `"2025-06-19 09:51:44.271000+00:00"`
-  or `None`. `check` → `bool`.
-- **Endpoint / auth header / raw JSON:** ❓ UNKNOWN — capture in probe
-- **Measured latency:** ❓ UNKNOWN
-- **Limitations:** `max_age` is capped at 2400h (100 days). `None` from `retrieve_date` is
-  ambiguous — never swapped vs. no data. Decide how the agent treats that.
+```
+/check          {"phoneNumber":"+99999991000","maxAge":240}  → 200 {"swapped":true}
+                {"phoneNumber":"+99999991001","maxAge":240}  → 200 {"swapped":false}
+/retrieve-date  {"phoneNumber":"+99999991000"}
+                → 200 {"latestSimChange":"2026-08-12T11:40:52.028918Z"}
+```
 
-## Number Verification 📄
+`maxAge` is in **hours**, 1–2400. Fraud signal: recent swap ⇒ OTP-interception risk.
 
-- **SDK calls:** ❓ page did not render for extraction — needs manual paste
-- **⚠ MAJOR RISK:** silent network authentication normally requires the handset to be on
-  **mobile data** (not WiFi) and involves an operator OAuth redirect from the device
-  itself. A server-side probe from a laptop may be structurally unable to complete it.
-  **Confirm early.** If it can't work, we integrate 3 APIs, not 4, and say so honestly.
-- **Endpoint / request / response / latency / errors:** ❓ UNKNOWN
+## ✅ Call Forwarding Signal — `POST /passthrough/camara/v1/call-forwarding-signal/call-forwarding-signal/v0.3/...`
 
-## Location Verification 📄
+```
+/unconditional-call-forwardings  {"phoneNumber":"+99999991000"} → 200 {"active":true}
+                                 {"phoneNumber":"+99999991001"} → 200 {"active":false}
+/call-forwardings                {"phoneNumber":"+99999991000"}
+   → 200 ["unconditional","conditional_no_answer"]
+   (+99999991111 → all four types incl. conditional_busy, conditional_not_reachable)
+```
 
-- **SDK call:**
-  ```python
-  result = client.location.verify_v1(
-      device={"phone_number": "+999991234567"},
-      area={"area_type": "CIRCLE"},
-      max_age=3600,
-  )
-  ```
-  (`area` needs centre lat/long + radius — exact key names ❓ UNKNOWN, capture in probe)
-- **Response fields:** `verification_result` ∈ `TRUE | FALSE | PARTIAL | UNKNOWN`;
-  `match_rate` (int, only when `PARTIAL`); `last_location_time` (datetime, omitted when
-  `UNKNOWN`)
-- **`max_age`:** seconds (3600) — **note the unit differs from SIM Swap's hours.** Easy bug.
-- **Endpoint / auth / latency:** ❓ UNKNOWN
-- **Limitations:** verifies *against an area you supply* — it does **not** return a
-  position. Our "device location vs claimed transaction origin" framing must be rewritten
-  as "is the device within Xkm of the expected city", with the radius chosen by us.
+**This is our highest-value signal and it replaces Number Verification.** Unconditional
+forwarding active at payment time means the customer's calls are being intercepted — a
+direct indicator of an in-progress scam, not merely of a compromised identity. Note the
+`/call-forwardings` variant may return **501** on some operators (documented, out of the
+CFS API's core scope); handle it.
 
-## Device Status (Roaming / Reachability) 📄
+## ✅ Device Status / Roaming — `POST /device-status/device-roaming-status/v1/retrieve`
 
-- **SDK calls:** ❓ page did not render for extraction — needs manual paste
-- Documented as covering **roaming** and **reachability**
-- **Endpoint / request / response / latency / errors:** ❓ UNKNOWN
-- Roaming is our headline APP-fraud signal — this one matters most. Probe it first.
+```
+{"device":{"phoneNumber":"+99999991000"}}
+  → 200 {"device":{"phoneNumber":"+99999991000"},
+         "lastStatusTime":"2026-08-12T11:50:53.268270Z",
+         "roaming":true,"countryCode":36,"countryName":["HU"]}
+{"device":{"phoneNumber":"+99999991001"}}
+  → 200 {...,"roaming":false}          # countryCode/countryName omitted when home
+```
+
+`countryCode` is an **MCC** (36 → HU). `countryName` is a list — a single MCC can map to
+several countries (e.g. 340 → BL, GF, GP, MF, MQ). Do not assume one element.
+
+## ✅ Location Verification — `POST /location-verification/v1/verify`
+
+```
+{"device":{"phoneNumber":"+99999991001"},
+ "area":{"areaType":"CIRCLE","center":{"latitude":50.735851,"longitude":7.10066},
+         "radius":50000}}
+  → 200 {"verificationResult":"TRUE","lastLocationTime":"2026-08-12T11:50:54.339972"}
+```
+
+`verificationResult` ∈ `TRUE | FALSE | PARTIAL | UNKNOWN`. `matchRate` (int) present only
+on `PARTIAL`. `lastLocationTime` omitted on `UNKNOWN`.
+
+**Limitation:** verifies against an area *we* supply — it does not return a position. Our
+check is therefore "is the device within R metres of the expected city", radius chosen by
+us. `radius` is in **metres**; note `maxAge` here is **seconds** while SIM Swap's is hours.
+
+## ❌ Number Verification — NOT USABLE, and that is a finding
+
+```
+POST /passthrough/camara/v1/number-verification/number-verification/v0/verify
+{"phoneNumber":"+99999991000"} → 401 {"detail":"Authorization header is missing"}
+```
+
+Subscriber-scoped: needs a **three-legged OIDC authorisation-code token**, which requires
+the handset itself to complete a redirect **over mobile data, not WiFi**. A server-side
+call structurally cannot satisfy this. `probe_number_verification.py` is kept in the repo
+as evidence. Replaced by Call Forwarding Signal.
+
+## ✅ Error behaviour — testable on demand
+
+```
++99999990400 → 400 | +99999990404 → 404 | +99999990500 → 500 {"detail":"Internal Server Error"}
+unknown path → 404 {"message":"Endpoint '/x' does not exist"}
+```
+
+These let us exercise the `fallback.py` path with a **real** failure rather than a mock.
+Use `+99999990500` in the demo to show honest degradation live.
 
 ---
 
-## Open questions blocking `app/camara/`
+## Final API set — 4 APIs, 2 categories
 
-1. Real App Key in `.env` (blocked on human — console login)
-2. Whether the SIMULATOR plan covers all four APIs or only some
-3. Number Verification feasibility server-side (see risk above)
-4. Actual wire format + latency for all four
-5. Exact `area` dict keys for Location Verification
+| API | Category | Fraud signal |
+|---|---|---|
+| SIM Swap | Identity / anti-fraud | Recent swap ⇒ OTP interception risk |
+| Call Forwarding Signal | Identity / anti-fraud | Calls being intercepted **right now** |
+| Device Roaming Status | Device / network | Roaming + new beneficiary = classic APP pattern |
+| Location Verification | Device / location | Device not where the transaction claims |
+
+Satisfies the "multiple APIs" and "spanning categories" bonus criteria.
