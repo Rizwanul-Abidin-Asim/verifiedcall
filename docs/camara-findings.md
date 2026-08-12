@@ -131,6 +131,50 @@ to show honest degradation live.
 
 ---
 
+## ⚠️ Signal matrix — the simulator is effectively binary
+
+Measured 2026-08-12 via `scripts/spikes/probe_signal_matrix.py`:
+
+| Number | SIM swap | Call fwd | Roaming | Location |
+|---|---|---|---|---|
+| `+99999991001` | clean | clean | home | TRUE |
+| `+99999991000` | SWAPPED | FORWARDING | ROAMING HU | FALSE |
+| `+99999991002` | SWAPPED | FORWARDING | ROAMING HU | UNKNOWN |
+| `+99999991003` | SWAPPED | FORWARDING | ROAMING HU | PARTIAL |
+| `+99999991004/5`, `1111`, `1112` | SWAPPED | FORWARDING | ROAMING HU | TRUE |
+
+**Only `…1001` is clean. Every other number returns swapped + forwarding + roaming.**
+The single dimension that varies independently is **location**.
+
+Consequences we must design around, and disclose:
+
+1. **We cannot demonstrate a mixed profile** — e.g. "SIM clean but calls forwarded" — with
+   live sandbox data. Only the four location variants above are reachable.
+2. **Location Verification ignores the area we send.** `+99999991004` returns `TRUE`
+   whether we ask about Dubai, Bonn or Tokyo; `+99999991000` returns `FALSE` for all
+   three. The verdict is keyed to the phone number alone. Our client sends a real
+   `CIRCLE` area and would work against a live network, but in the demo **no geofence is
+   actually being computed**. Do not claim otherwise on stage.
+3. **The published docs disagree with observed behaviour**: docs list `…1002` as "partially
+   within area" and `…1003` as "location unknown". Observed is the reverse.
+4. The simulator is **not internally consistent** — a number can report roaming in Hungary
+   while also verifying TRUE against a Dubai area. Don't build a narrative that needs both
+   signals to agree.
+
+### Demo scenarios chosen from what actually exists
+
+| # | Number | Profile | Expected |
+|---|---|---|---|
+| 1 | `…1001` | all clean | approve |
+| 2 | `…1000` | all bad, device **not** in expected area | decline |
+| 3 | `…1004` | all bad, device **is** in expected area | **intervene** ← headline |
+| 4 | `…1003` | all bad, location PARTIAL | intervene |
+
+Scenarios 2 and 3 carry the pitch: when the device is somewhere else, it looks like
+**theft** — decline it. When the device is exactly where it should be but the calls are
+being forwarded, the customer really is doing this themselves under coercion — that is
+**APP fraud**, and the right response is to phone them, not to decline.
+
 ## Final API set — 4 APIs, 2 categories
 
 | API | Category | Fraud signal |
