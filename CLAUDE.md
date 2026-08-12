@@ -125,8 +125,18 @@ uv sync --extra dev                        # or: pip install -e ".[dev]"
 uv run uvicorn app.main:app --reload       # http://127.0.0.1:8000/health
 ```
 
+## Deadlines — two gates
+
+| Gate | Date | Deliverable |
+|---|---|---|
+| **Idea Phase** | **23 Aug 2026** | Filled-in GSMA template + architecture diagram link. Document, not code. |
+| **Prototype Phase** | 28 Aug – **13 Sep 2026** | Working codebase, public repo link mandatory. |
+
+Full detail in `docs/hackathon-requirements.md` — read it before any scoping decision.
+
 ## Current status
 
 Phase 0 complete: skeleton, config, health endpoint.
 Next: **Phase 1 — probe the Nokia NaC sandbox** and fill in `docs/camara-findings.md`.
 Nothing in `app/camara/` should be written until that file has real recorded shapes in it.
+**Blocked on:** `NOKIA_NAC_API_KEY` from the Nokia console (human step).
