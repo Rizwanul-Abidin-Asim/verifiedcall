@@ -6,8 +6,8 @@ Create Date: 2026-08-12 22:04:42.901025
 """
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy import Text  # autogenerate emits bare Text() in the JSONB variant
 from sqlalchemy.dialects import postgresql
 
@@ -35,7 +35,7 @@ def upgrade() -> None:
     op.create_table('decisions',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('transaction_id', sa.Uuid(), nullable=False),
-    sa.Column('outcome', sa.Enum('approve', 'intervene', 'decline', name='decisionoutcome', native_enum=False, length=16), nullable=False),
+    sa.Column('outcome', sa.Enum('approve', 'intervene', 'decline', name='decisionoutcome', native_enum=False, create_constraint=True, length=16), nullable=False),
     sa.Column('risk_score', sa.Integer(), nullable=False),
     sa.Column('reasoning_trace', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'), nullable=False),
     sa.Column('total_latency_ms', sa.Numeric(precision=10, scale=2), nullable=False),
@@ -53,7 +53,7 @@ def upgrade() -> None:
     sa.Column('api_name', sa.String(length=64), nullable=False),
     sa.Column('request_payload', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'), nullable=False),
     sa.Column('response_payload', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'), nullable=False),
-    sa.Column('source', sa.Enum('live', 'fallback', name='signalsourcekind', native_enum=False, length=16), nullable=False),
+    sa.Column('source', sa.Enum('live', 'fallback', name='signalsourcekind', native_enum=False, create_constraint=True, length=16), nullable=False),
     sa.Column('fallback_reason', sa.Text(), nullable=True),
     sa.Column('latency_ms', sa.Numeric(precision=10, scale=2), nullable=False),
     sa.Column('called_at', sa.DateTime(timezone=True), nullable=False),
@@ -68,8 +68,8 @@ def upgrade() -> None:
     sa.Column('transaction_id', sa.Uuid(), nullable=False),
     sa.Column('vapi_call_id', sa.String(length=120), nullable=True),
     sa.Column('language', sa.String(length=8), nullable=False),
-    sa.Column('status', sa.Enum('pending', 'ringing', 'in_progress', 'completed', 'failed', name='voicestatus', native_enum=False, length=16), nullable=False),
-    sa.Column('outcome', sa.Enum('confirmed_legitimate', 'scam_detected', 'no_answer', 'inconclusive', name='voiceoutcome', native_enum=False, length=24), nullable=True),
+    sa.Column('status', sa.Enum('pending', 'ringing', 'in_progress', 'completed', 'failed', name='voicestatus', native_enum=False, create_constraint=True, length=16), nullable=False),
+    sa.Column('outcome', sa.Enum('confirmed_legitimate', 'scam_detected', 'no_answer', 'inconclusive', name='voiceoutcome', native_enum=False, create_constraint=True, length=24), nullable=True),
     sa.Column('transcript', sa.Text(), nullable=True),
     sa.Column('answers', sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'), nullable=False),
     sa.Column('duration_s', sa.Integer(), nullable=True),

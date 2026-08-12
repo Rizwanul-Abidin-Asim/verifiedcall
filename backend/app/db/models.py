@@ -36,8 +36,13 @@ def enum_column(enum_cls, length: int) -> Enum:
 
     SQLAlchemy defaults to names. The dashboard, /metrics and any ad-hoc SQL read these
     columns directly, and they expect the same lowercase strings the API returns.
+
+    create_constraint=True because it defaults to False since SQLAlchemy 1.4 — without
+    it the column is a bare VARCHAR and the database would happily store source='banana'.
+    "Was this signal live or cached?" is the honesty claim of this project; it should not
+    be enforceable only by application code.
     """
-    return Enum(enum_cls, native_enum=False, length=length,
+    return Enum(enum_cls, native_enum=False, length=length, create_constraint=True,
                 values_callable=lambda e: [m.value for m in e])
 
 
