@@ -7,7 +7,7 @@
 > `app/camara/` clients against — standing rule 1 still holds. Values get promoted to
 > ✅ **OBSERVED** only after a probe script prints them.
 >
-> Filled in by: PROMPT 1. Last updated 2026-08-01.
+> Filled in by: PROMPT 1. Last updated 2026-08-12.
 
 ---
 

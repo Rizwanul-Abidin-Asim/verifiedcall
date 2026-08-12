@@ -4,7 +4,7 @@ Short records of *why*, written as we go rather than reconstructed at the end.
 
 ## ADR-000 — Repository shape
 
-**Date:** 2026-08-01
+**Date:** 2026-08-12
 **Status:** accepted
 
 `camara/` holds one thin, typed module per API so a sandbox limitation breaks exactly one
