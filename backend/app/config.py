@@ -21,8 +21,15 @@ class Settings(BaseSettings):
     nokia_nac_base_url: str = ""
 
     # --- Agent LLM ---
+    # Provider is configurable so a rate limit mid-pitch is a one-line .env change rather
+    # than a crisis, and so we can measure which model is more SELECTIVE about which
+    # signals it pulls — that selectivity is our "real agent, not a rules engine" claim.
+    llm_provider: str = "groq"  # groq | gemini
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    agent_timeout_s: float = 8.0
 
     # --- Voice ---
     vapi_api_key: str = ""

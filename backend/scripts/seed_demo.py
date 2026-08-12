@@ -19,9 +19,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db.models import Transaction  # noqa: E402
 from app.db.session import create_all, dispose_engine, get_sessionmaker  # noqa: E402
 
-SANDBOX_HIGH_RISK = "+99999991000"  # swapped SIM, forwarding on, roaming, wrong location
-SANDBOX_CLEAN = "+99999991001"  # everything green
-SANDBOX_OUTAGE = "+99999990500"  # forces HTTP 500 on all four APIs
+# Chosen from the measured signal matrix in docs/camara-findings.md. The sandbox is
+# effectively binary — only ...1001 is clean — so location is the only signal that varies
+# independently, and the scenarios are built around that.
+SANDBOX_CLEAN = "+99999991001"       # clean / clean / home / location TRUE
+SANDBOX_ELSEWHERE = "+99999991000"   # swapped / forwarding / roaming / location FALSE
+SANDBOX_AT_HOME = "+99999991004"     # swapped / forwarding / roaming / location TRUE
+SANDBOX_PARTIAL = "+99999991003"     # swapped / forwarding / roaming / location PARTIAL
+SANDBOX_OUTAGE = "+99999990500"      # forces HTTP 500 on all four APIs
 
 SCENARIOS = [
     {
@@ -34,31 +39,32 @@ SCENARIOS = [
         "customer_locale": "en",
     },
     {
-        "name": "2. Recent SIM swap + new beneficiary — expect DECLINE",
+        "name": "2. Signals bad AND device not where claimed — expect DECLINE "
+                "(reads as account takeover, not coercion)",
         "amount": Decimal("18500.00"),
         "merchant_name": "Direct transfer",
         "beneficiary_id": "BEN-NEW-9912",
         "is_new_beneficiary": True,
-        "signal_msisdn": SANDBOX_HIGH_RISK,
+        "signal_msisdn": SANDBOX_ELSEWHERE,
         "customer_locale": "ar",
     },
     {
-        "name": "3. Roaming + large amount + new beneficiary — expect INTERVENE "
-                "(headline APP fraud case)",
+        "name": "3. Signals bad but device IS where expected — expect INTERVENE "
+                "(headline APP fraud case: the customer really is doing this themselves)",
         "amount": Decimal("42000.00"),
         "merchant_name": "Direct transfer — 'safe account'",
         "beneficiary_id": "BEN-NEW-7731",
         "is_new_beneficiary": True,
-        "signal_msisdn": SANDBOX_HIGH_RISK,
+        "signal_msisdn": SANDBOX_AT_HOME,
         "customer_locale": "ur",
     },
     {
-        "name": "4. Location mismatch, moderate amount — expect INTERVENE",
+        "name": "4. Partial location match, moderate amount — expect INTERVENE",
         "amount": Decimal("6300.00"),
         "merchant_name": "Al Ansari Exchange",
         "beneficiary_id": "BEN-NEW-2280",
         "is_new_beneficiary": True,
-        "signal_msisdn": SANDBOX_HIGH_RISK,
+        "signal_msisdn": SANDBOX_PARTIAL,
         "customer_locale": "hi",
     },
 ]
