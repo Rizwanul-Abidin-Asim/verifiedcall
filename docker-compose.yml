@@ -7,7 +7,9 @@ services:
       POSTGRES_PASSWORD: verifiedcall
       POSTGRES_DB: verifiedcall
     ports:
-      - "5432:5432"
+      # 55432, not 5432: this machine already runs another Postgres on the default port,
+      # and colliding meant the app silently connected to the wrong database.
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +22,7 @@ services:
     image: redis:7-alpine
     container_name: verifiedcall-redis
     ports:
-      - "6379:6379"
+      - "56379:6379"  # avoids any pre-existing local Redis, same reasoning as Postgres
     volumes:
       - redisdata:/data
     healthcheck:
