@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     # signals it pulls — that selectivity is our "real agent, not a rules engine" claim.
     llm_provider: str = "groq"  # groq | gemini
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
     agent_timeout_s: float = 8.0
 
     # --- Voice ---
@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
 
     # --- Infra ---
-    database_url: str = "postgresql+asyncpg://verifiedcall:verifiedcall@localhost:5432/verifiedcall"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql+asyncpg://verifiedcall:verifiedcall@localhost:55432/verifiedcall"
+    redis_url: str = "redis://localhost:56379/0"
 
     # --- Demo / test switches (see PROMPT 6 and PROMPT 9) ---
     demo_mode: bool = False
