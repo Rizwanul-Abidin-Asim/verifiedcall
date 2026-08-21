@@ -130,7 +130,7 @@ uv run uvicorn app.main:app --reload       # http://127.0.0.1:8000/health
 | Gate | Date | Deliverable |
 |---|---|---|
 | **Idea Phase** | **23 Aug 2026** | Filled-in GSMA template + architecture diagram link. Document, not code. |
-| **Prototype Phase** | 28 Aug – **13 Sep 2026** | Working codebase, public repo link mandatory. |
+| **Prototype Phase** | **26 Aug – 9 Sep 2026** | Working codebase, public repo link mandatory. |
 
 Full detail in `docs/hackathon-requirements.md` — read it before any scoping decision.
 

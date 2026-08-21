@@ -9,11 +9,13 @@ Compiled 2026-08-12.
 | Phase | Window | Deliverable |
 |---|---|---|
 | **Idea Phase** | 1 Jul – **23 Aug 2026** | A filled-in Inspiration Guide template + architecture diagram link. **Document, not code.** |
-| **Prototype Phase** | 28 Aug – **13 Sep 2026** | Working codebase, public repo link mandatory. |
+| **Prototype Phase** | **26 Aug – 9 Sep 2026** | Working codebase, public repo link mandatory. |
+| Shortlist announced | 15 Sep 2026 | |
+| Grand finale | week of 21 Sep 2026 | Finalists present live. |
 | Final showcase | MWC Doha, 8–10 Nov 2026 | Travel + accommodation covered |
 
 Team size 1–5. Eligibility: residents of Arab League states + Türkiye, 18+.
-Prizes: cash for top 3, pool reportedly up to USD 10,000.
+Prize pool: **GBP 10,000** (confirmed on the official deck).
 
 ## Our theme
 
@@ -55,6 +57,22 @@ Every theme in the Inspiration Guide follows this identical structure. Fill it v
    Component → Component steps, then "Architecture components" as boxes
 10. **Diagram Link** — ⚠️ *"Please insert or attach the links to your architecture diagrams
     in this document for your idea submission."* Lucidchart / Figma / Miro / Excalidraw.
+
+## Confirmed evaluation criteria (Phase 1 — Idea Evaluation)
+
+Judged on the **Idea Capture Template + Pitch Deck** only. Four criteria:
+
+1. **Relevance** — alignment with one of the 7 themes; relevance to regional challenges
+2. **Impact** — potential to scale across MENA; clear business model or socio-economic value
+3. **Innovation** — originality; addresses meaningful regional pain points
+4. **Complexity & Implementation** — technical depth; clear design; effective use of Open
+   Gateway/CAMARA APIs; feasible architecture; **AI agent design that intelligently
+   orchestrates CAMARA APIs using only the approved Resource & Tooling Guide**
+
+Nokia's own "what makes a strong submission" guidance adds: explain **why each API is
+essential** and how they work together; **map the user journey** showing where each API
+adds value before/during/after; show **combined API benefits** unachievable with one API
+alone; position APIs as building blocks for a **secure, reliable experience**.
 
 ## Scoring levers stated in the materials
 
