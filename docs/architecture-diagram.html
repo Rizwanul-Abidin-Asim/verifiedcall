@@ -1,0 +1,653 @@
+<title>VerifiedCall Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --ground:      #F6F8FA;
+    --surface:     #FFFFFF;
+    --surface-2:   #EDF1F5;
+    --ink:         #14202B;
+    --ink-soft:    #4A5D6E;
+    --ink-faint:   #7C8FA0;
+    --line:        #CDD8E1;
+    --line-soft:   #E1E8EE;
+    --net:         #1F6F94;
+    --net-wash:    #E4F0F6;
+    --ok:          #1E7A55;
+    --hold:        #A85F12;
+    --stop:        #A93A36;
+    --shadow:      0 1px 2px rgba(20, 32, 43, .06), 0 8px 24px rgba(20, 32, 43, .05);
+  }
+  :root:not([data-theme="light"]) {
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #0C1319;
+      --surface:   #131C25;
+      --surface-2: #1B2733;
+      --ink:       #E3ECF3;
+      --ink-soft:  #A2B5C4;
+      --ink-faint: #74889A;
+      --line:      #2C3B49;
+      --line-soft: #223039;
+      --net:       #5FB6D8;
+      --net-wash:  #14303D;
+      --ok:        #4FBF8B;
+      --hold:      #E0A050;
+      --stop:      #E4736C;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:    #0C1319;
+    --surface:   #131C25;
+    --surface-2: #1B2733;
+    --ink:       #E3ECF3;
+    --ink-soft:  #A2B5C4;
+    --ink-faint: #74889A;
+    --line:      #2C3B49;
+    --line-soft: #223039;
+    --net:       #5FB6D8;
+    --net-wash:  #14303D;
+    --ok:        #4FBF8B;
+    --hold:      #E0A050;
+    --stop:      #E4736C;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1.1rem, 4vw, 2.5rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2.5rem, 5vw, 4rem);
+  }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--net);
+    margin: 0 0 .5rem;
+  }
+
+  header .title {
+    font-size: clamp(2.1rem, 5.5vw, 3.4rem);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    line-height: 1.05;
+    text-wrap: balance;
+    margin: 0 0 .75rem;
+  }
+  header .standfirst {
+    font-size: clamp(1.02rem, 2vw, 1.18rem);
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 1.5rem;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem .55rem;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .74rem;
+  }
+  .meta span {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 999px;
+    padding: .3rem .7rem;
+    color: var(--ink-soft);
+  }
+
+  section { display: flex; flex-direction: column; gap: 1.1rem; }
+  h2 {
+    font-size: clamp(1.3rem, 2.6vw, 1.7rem);
+    font-weight: 600;
+    letter-spacing: -.015em;
+    line-height: 1.2;
+    text-wrap: balance;
+    margin: 0;
+  }
+  section > p { margin: 0; max-width: 68ch; color: var(--ink-soft); }
+  section > p strong { color: var(--ink); font-weight: 600; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .scroller { overflow-x: auto; padding: 1.4rem 1.4rem .6rem; }
+  figure svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--ink); }
+  figcaption {
+    border-top: 1px solid var(--line-soft);
+    padding: .8rem 1.4rem;
+    font-size: .86rem;
+    color: var(--ink-faint);
+    background: var(--surface-2);
+  }
+
+  /* ---- shared SVG vocabulary ---- */
+  .node       { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.2; }
+  .node-net   { fill: var(--net-wash);  stroke: var(--net);  stroke-width: 1.2; }
+  .node-ghost { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .lbl        { font-family: "IBM Plex Sans", sans-serif; font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .sub        { font-family: "IBM Plex Mono", monospace; font-size: 10px; fill: var(--ink-faint); }
+  .edge       { stroke: var(--ink-soft); stroke-width: 1.4; fill: none; }
+  .edge-dash  { stroke: var(--ink-faint); stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+  .edge-net   { stroke: var(--net); stroke-width: 1.6; fill: none; }
+  .edge-ok    { stroke: var(--ok);   stroke-width: 1.6; fill: none; }
+  .edge-hold  { stroke: var(--hold); stroke-width: 1.6; fill: none; }
+  .edge-stop  { stroke: var(--stop); stroke-width: 1.6; fill: none; }
+  .tag        { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; fill: var(--ink-faint); }
+  .step       { fill: var(--net); }
+  .stepnum    { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; font-weight: 600; fill: var(--surface); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .9rem;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  thead th {
+    background: var(--surface-2);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    font-weight: 600;
+    text-align: left;
+    padding: .7rem .9rem;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: .72rem .9rem; border-bottom: 1px solid var(--line-soft); vertical-align: top; color: var(--ink-soft); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody td:first-child { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .tablewrap { overflow-x: auto; border-radius: 10px; }
+
+  ol.flow { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: .55rem; }
+  ol.flow li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 1.65rem 1fr;
+    gap: .8rem;
+    align-items: start;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 8px;
+    padding: .7rem .9rem;
+    font-size: .92rem;
+    color: var(--ink-soft);
+  }
+  ol.flow li::before {
+    content: counter(s);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .72rem;
+    font-weight: 600;
+    color: var(--surface);
+    background: var(--net);
+    width: 1.35rem; height: 1.35rem;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    margin-top: .08rem;
+  }
+  ol.flow b { color: var(--ink); font-weight: 600; }
+  ol.flow code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .84em;
+    color: var(--net);
+  }
+
+  .note {
+    border-left: 3px solid var(--net);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    padding: .9rem 1.1rem;
+    font-size: .93rem;
+    color: var(--ink-soft);
+    max-width: 72ch;
+  }
+  .note b { color: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.4rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .76rem;
+    color: var(--ink-faint);
+    line-height: 1.9;
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Technical architecture</p>
+    <h1 class="title">VerifiedCall</h1>
+    <p class="standfirst">An AI agent that intercepts authorised push payment fraud by
+      reading mobile-network signals, then phoning the customer in their own language
+      before the money settles.</p>
+    <div class="meta">
+      <span>Team antifraud</span>
+      <span>GSMA MENA Ignite Hackathon</span>
+      <span>Theme 4 &#183; Secure Fintech, Payments &amp; Anti-Fraud</span>
+      <span>Pillar &#183; Connectivity for Good</span>
+    </div>
+  </header>
+
+  <!-- ============================ FIGURE 1 ============================ -->
+  <section>
+    <div>
+      <p class="eyebrow">Request path</p>
+      <h2>How a payment reaches the network</h2>
+    </div>
+    <p>The payment gateway holds the transaction and hands it to us. The agent decides
+      <strong>which</strong> network signals are worth their latency, and only those are
+      pulled &#8212; in parallel, behind a 3-second timeout.</p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 1240 430" role="img"
+             aria-label="A payment moves from the merchant checkout through the decision API to the risk agent, which selects signals and calls the CAMARA client layer; that layer queries four APIs on Nokia Network as Code in parallel, and falls back to a cache that tags its responses as cached when the network errors.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="arNet" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--net)"/>
+            </marker>
+            <marker id="arFaint" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-faint)"/>
+            </marker>
+          </defs>
+
+          <!-- row A -->
+          <rect class="node" x="16"   y="56" width="184" height="78" rx="7"/>
+          <text class="lbl" x="108"  y="88"  text-anchor="middle">Merchant checkout</text>
+          <text class="sub" x="108"  y="106" text-anchor="middle">payment gateway</text>
+          <text class="sub" x="108"  y="122" text-anchor="middle">payment held</text>
+
+          <rect class="node" x="268"  y="56" width="184" height="78" rx="7"/>
+          <text class="lbl" x="360"  y="88"  text-anchor="middle">Decision API</text>
+          <text class="sub" x="360"  y="106" text-anchor="middle">FastAPI</text>
+          <text class="sub" x="360"  y="122" text-anchor="middle">/transactions/evaluate</text>
+
+          <rect class="node-net" x="520" y="56" width="200" height="78" rx="7"/>
+          <text class="lbl" x="620"  y="88"  text-anchor="middle">Risk agent</text>
+          <text class="sub" x="620"  y="106" text-anchor="middle">Pydantic AI &#183; Groq</text>
+          <text class="sub" x="620"  y="122" text-anchor="middle">chooses the signals</text>
+
+          <rect class="node" x="788"  y="56" width="164" height="78" rx="7"/>
+          <text class="lbl" x="870"  y="88"  text-anchor="middle">Agent tools</text>
+          <text class="sub" x="870"  y="106" text-anchor="middle">no direct HTTP</text>
+          <text class="sub" x="870"  y="122" text-anchor="middle">audited on every call</text>
+
+          <rect class="node" x="1020" y="56" width="204" height="78" rx="7"/>
+          <text class="lbl" x="1122" y="88"  text-anchor="middle">CAMARA client</text>
+          <text class="sub" x="1122" y="106" text-anchor="middle">3s timeout &#183; retry on 5xx</text>
+          <text class="sub" x="1122" y="122" text-anchor="middle">typed responses</text>
+
+          <!-- row A edges -->
+          <g class="edge" marker-end="url(#ar)">
+            <line x1="200" y1="95" x2="262" y2="95"/>
+            <line x1="452" y1="95" x2="514" y2="95"/>
+            <line x1="720" y1="95" x2="782" y2="95"/>
+            <line x1="952" y1="95" x2="1014" y2="95"/>
+          </g>
+          <g>
+            <circle class="step" cx="231" cy="38" r="9"/><text class="stepnum" x="231" y="41.5" text-anchor="middle">1</text>
+            <circle class="step" cx="483" cy="38" r="9"/><text class="stepnum" x="483" y="41.5" text-anchor="middle">2</text>
+            <circle class="step" cx="751" cy="38" r="9"/><text class="stepnum" x="751" y="41.5" text-anchor="middle">3</text>
+            <circle class="step" cx="983" cy="38" r="9"/><text class="stepnum" x="983" y="41.5" text-anchor="middle">4</text>
+          </g>
+          <text class="tag" x="231" y="152" text-anchor="middle">webhook</text>
+          <text class="tag" x="483" y="152" text-anchor="middle">persist</text>
+          <text class="tag" x="751" y="152" text-anchor="middle">selected</text>
+          <text class="tag" x="983" y="152" text-anchor="middle">typed call</text>
+
+          <!-- down to Nokia -->
+          <path class="edge-net" d="M1122 134 L1122 230" marker-end="url(#arNet)"/>
+          <text class="tag" x="1134" y="180" style="fill:var(--net)">5 &#183; in parallel</text>
+
+          <!-- Nokia container -->
+          <rect class="node-net" x="900" y="236" width="324" height="152" rx="7"/>
+          <text class="lbl" x="1062" y="262" text-anchor="middle">Nokia Network as Code</text>
+          <rect class="node" x="916"  y="278" width="144" height="42" rx="5"/>
+          <text class="sub" x="988"  y="298" text-anchor="middle" style="font-size:10.5px;fill:var(--ink)">Call Forwarding</text>
+          <text class="sub" x="988"  y="311" text-anchor="middle">scam in progress</text>
+          <rect class="node" x="1068" y="278" width="144" height="42" rx="5"/>
+          <text class="sub" x="1140" y="298" text-anchor="middle" style="font-size:10.5px;fill:var(--ink)">Location Verify</text>
+          <text class="sub" x="1140" y="311" text-anchor="middle">theft or coercion</text>
+          <rect class="node" x="916"  y="332" width="144" height="42" rx="5"/>
+          <text class="sub" x="988"  y="352" text-anchor="middle" style="font-size:10.5px;fill:var(--ink)">Device Roaming</text>
+          <text class="sub" x="988"  y="365" text-anchor="middle">abroad, isolated</text>
+          <rect class="node" x="1068" y="332" width="144" height="42" rx="5"/>
+          <text class="sub" x="1140" y="352" text-anchor="middle" style="font-size:10.5px;fill:var(--ink)">SIM Swap</text>
+          <text class="sub" x="1140" y="365" text-anchor="middle">OTP interception</text>
+
+          <!-- fallback -->
+          <rect class="node-ghost" x="640" y="270" width="200" height="76" rx="7"/>
+          <text class="lbl" x="740" y="300" text-anchor="middle">Fallback cache</text>
+          <text class="sub" x="740" y="318" text-anchor="middle">source = "fallback"</text>
+          <text class="sub" x="740" y="333" text-anchor="middle">never shown as live</text>
+          <path class="edge-dash" d="M840 308 L880 308 L880 172 L1056 172 L1056 140" marker-end="url(#arFaint)"/>
+          <text class="tag" x="968" y="190" text-anchor="middle">on error, timeout or rate limit</text>
+        </svg>
+      </div>
+      <figcaption>The agent never issues HTTP itself &#8212; it reaches the network only through
+        the tool layer, so every call is audited. A failed signal degrades to a cached
+        response that stays labelled as cached all the way to the dashboard.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================ FIGURE 2 ============================ -->
+  <section>
+    <div>
+      <p class="eyebrow">Decision path</p>
+      <h2>What happens to the signals</h2>
+    </div>
+    <p>The model orchestrates and explains. It does <strong>not</strong> produce the risk
+      number &#8212; a deterministic engine does, from a weighting table a compliance officer can
+      read. The same transaction always scores the same.</p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 1240 440" role="img"
+             aria-label="Observed signals feed a deterministic scoring engine, which produces one of three outcomes: approve, hold and call, or decline. A held payment triggers the multilingual voice layer, which calls the customer. Every step is written to the audit service, then to PostgreSQL, and streamed live to the fraud operations dashboard.">
+          <defs>
+            <marker id="b-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="b-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ok)"/>
+            </marker>
+            <marker id="b-hold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--hold)"/>
+            </marker>
+            <marker id="b-stop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--stop)"/>
+            </marker>
+            <marker id="b-faint" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-faint)"/>
+            </marker>
+          </defs>
+
+          <rect class="node" x="16" y="40" width="210" height="122" rx="7"/>
+          <text class="lbl" x="121" y="66" text-anchor="middle">Observed signals</text>
+          <text class="sub" x="121" y="88"  text-anchor="middle">each tagged live or cached</text>
+          <text class="sub" x="121" y="106" text-anchor="middle">each with its latency</text>
+          <text class="sub" x="121" y="124" text-anchor="middle">plus transaction context</text>
+          <text class="sub" x="121" y="146" text-anchor="middle">amount &#183; payee &#183; hour</text>
+
+          <rect class="node-net" x="298" y="68" width="230" height="66" rx="7"/>
+          <text class="lbl" x="413" y="94"  text-anchor="middle">Scoring engine</text>
+          <text class="sub" x="413" y="114" text-anchor="middle">deterministic &#183; 0&#8211;100 &#183; reviewable</text>
+
+          <line class="edge" x1="226" y1="101" x2="292" y2="101" marker-end="url(#b-ar)"/>
+
+          <!-- outcomes -->
+          <rect class="node" x="640" y="24"  width="196" height="52" rx="7" style="stroke:var(--ok)"/>
+          <text class="lbl" x="738" y="46"  text-anchor="middle" style="fill:var(--ok)">Approve</text>
+          <text class="sub" x="738" y="63"  text-anchor="middle">score below 30</text>
+
+          <rect class="node" x="640" y="100" width="196" height="52" rx="7" style="stroke:var(--hold)"/>
+          <text class="lbl" x="738" y="122" text-anchor="middle" style="fill:var(--hold)">Hold and call</text>
+          <text class="sub" x="738" y="139" text-anchor="middle">customer appears present</text>
+
+          <rect class="node" x="640" y="176" width="196" height="52" rx="7" style="stroke:var(--stop)"/>
+          <text class="lbl" x="738" y="198" text-anchor="middle" style="fill:var(--stop)">Decline</text>
+          <text class="sub" x="738" y="215" text-anchor="middle">device is elsewhere</text>
+
+          <path class="edge-ok"   d="M528 101 L584 101 L584 50  L634 50"  marker-end="url(#b-ok)"/>
+          <path class="edge-hold" d="M528 101 L584 101 L584 126 L634 126" marker-end="url(#b-hold)"/>
+          <path class="edge-stop" d="M528 101 L584 101 L584 202 L634 202" marker-end="url(#b-stop)"/>
+
+          <!-- voice -->
+          <rect class="node" x="880" y="100" width="160" height="52" rx="7" style="stroke:var(--hold)"/>
+          <text class="lbl" x="960" y="122" text-anchor="middle">Voice layer</text>
+          <text class="sub" x="960" y="139" text-anchor="middle">Vapi &#183; ElevenLabs &#183; STT</text>
+
+          <rect class="node" x="1080" y="100" width="144" height="52" rx="7"/>
+          <text class="lbl" x="1152" y="122" text-anchor="middle">Customer</text>
+          <text class="sub" x="1152" y="139" text-anchor="middle">EN &#183; AR &#183; HI &#183; UR</text>
+
+          <line class="edge-hold" x1="836"  y1="126" x2="874"  y2="126" marker-end="url(#b-hold)"/>
+          <line class="edge-hold" x1="1040" y1="126" x2="1074" y2="126" marker-end="url(#b-hold)"/>
+
+          <!-- audit chain -->
+          <rect class="node" x="298" y="250" width="230" height="62" rx="7"/>
+          <text class="lbl" x="413" y="276" text-anchor="middle">Audit service</text>
+          <text class="sub" x="413" y="294" text-anchor="middle">no write bypasses it</text>
+
+          <rect class="node" x="298" y="352" width="230" height="62" rx="7"/>
+          <text class="lbl" x="413" y="378" text-anchor="middle">PostgreSQL</text>
+          <text class="sub" x="413" y="396" text-anchor="middle">immutable decision log</text>
+
+          <rect class="node" x="620" y="352" width="280" height="62" rx="7"/>
+          <text class="lbl" x="760" y="378" text-anchor="middle">Fraud-ops console</text>
+          <text class="sub" x="760" y="396" text-anchor="middle">Next.js &#183; reasoning trace timeline</text>
+
+          <line class="edge" x1="413" y1="134" x2="413" y2="244" marker-end="url(#b-ar)"/>
+          <text class="tag" x="424" y="196">every call, decision and rationale</text>
+          <line class="edge" x1="413" y1="312" x2="413" y2="346" marker-end="url(#b-ar)"/>
+          <line class="edge" x1="528" y1="383" x2="614" y2="383" marker-end="url(#b-ar)"/>
+          <text class="tag" x="571" y="374" text-anchor="middle">SSE</text>
+          <path class="edge-dash" d="M960 152 L960 281 L534 281" marker-end="url(#b-faint)"/>
+          <text class="tag" x="770" y="273" text-anchor="middle">transcript and call outcome</text>
+        </svg>
+      </div>
+      <figcaption>Three outcomes, not two. The middle path &#8212; hold the payment and phone the
+        customer &#8212; is the one that addresses coercion, and it is where a conventional fraud
+        engine has nothing to offer.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================ FIGURE 3 ============================ -->
+  <section>
+    <div>
+      <p class="eyebrow">The distinction that matters</p>
+      <h2>Theft and coercion look identical until you ask where the phone is</h2>
+    </div>
+    <p>These two cases produce the <strong>same</strong> signals: SIM swapped, calls
+      forwarded, device roaming, a large payment to a first-time payee. One is somebody
+      stealing an account. The other is a real customer being talked into it. They need
+      opposite responses &#8212; and no single API can tell them apart.</p>
+
+    <figure>
+      <div class="scroller">
+        <svg viewBox="0 0 1080 372" role="img"
+             aria-label="An identical set of signals leads to a single question: is the device where the payment claims to be? If no, somebody else is operating the account, which is theft, and the payment is declined. If yes, the genuine customer is present and under pressure, which is coercion, and the payment is held while the customer is telephoned.">
+          <defs>
+            <marker id="c-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="c-stop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--stop)"/>
+            </marker>
+            <marker id="c-hold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--hold)"/>
+            </marker>
+          </defs>
+
+          <rect class="node" x="16" y="96" width="244" height="182" rx="7"/>
+          <text class="lbl" x="138" y="126" text-anchor="middle">Identical signals</text>
+          <text class="sub" x="138" y="156" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">SIM swapped</text>
+          <text class="sub" x="138" y="180" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">calls forwarded</text>
+          <text class="sub" x="138" y="204" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">device roaming</text>
+          <text class="sub" x="138" y="228" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">first-time payee</text>
+          <text class="sub" x="138" y="252" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">large amount</text>
+
+          <rect class="node-net" x="330" y="142" width="222" height="90" rx="7"/>
+          <text class="lbl" x="441" y="172" text-anchor="middle">Location Verification</text>
+          <text class="sub" x="441" y="194" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">Is the device where the</text>
+          <text class="sub" x="441" y="211" text-anchor="middle" style="font-size:11px;fill:var(--ink-soft)">payment claims to be?</text>
+
+          <line class="edge" x1="260" y1="187" x2="324" y2="187" marker-end="url(#c-ar)"/>
+
+          <rect class="node" x="668" y="30" width="396" height="110" rx="7" style="stroke:var(--stop)"/>
+          <text class="lbl" x="692" y="60" style="fill:var(--stop)">Theft</text>
+          <text class="sub" x="692" y="84"  style="font-size:11.5px;fill:var(--ink-soft)">The person transacting is probably not the</text>
+          <text class="sub" x="692" y="102" style="font-size:11.5px;fill:var(--ink-soft)">customer. Calling the registered number</text>
+          <text class="sub" x="692" y="120" style="font-size:11.5px;fill:var(--ink-soft)">would not reach them.  &#8594;  DECLINE</text>
+
+          <rect class="node" x="668" y="232" width="396" height="110" rx="7" style="stroke:var(--hold)"/>
+          <text class="lbl" x="692" y="262" style="fill:var(--hold)">Coercion</text>
+          <text class="sub" x="692" y="286" style="font-size:11.5px;fill:var(--ink-soft)">The genuine customer is present, on their own</text>
+          <text class="sub" x="692" y="304" style="font-size:11.5px;fill:var(--ink-soft)">phone, doing this themselves under pressure.</text>
+          <text class="sub" x="692" y="322" style="font-size:11.5px;fill:var(--ink-soft)">A call resolves it.  &#8594;  HOLD AND CALL</text>
+
+          <path class="edge-stop" d="M552 172 L610 172 L610 85 L662 85"   marker-end="url(#c-stop)"/>
+          <path class="edge-hold" d="M552 202 L610 202 L610 287 L662 287" marker-end="url(#c-hold)"/>
+          <text class="tag" x="604" y="140" text-anchor="end" style="fill:var(--stop)">not there</text>
+          <text class="tag" x="604" y="240" text-anchor="end" style="fill:var(--hold)">exactly there</text>
+        </svg>
+      </div>
+      <figcaption>This is the combined benefit no individual API delivers. Call Forwarding
+        alone says a line is diverted; Location alone says where a phone is. Only together
+        do they say whether the person paying is free to say no.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============================ AUTHORITY ============================ -->
+  <section>
+    <div>
+      <p class="eyebrow">Division of authority</p>
+      <h2>What the model decides, and what it does not</h2>
+    </div>
+    <p>A regulator has to be able to reproduce a payment decision. "The model produced that
+      number" is not an acceptable answer, so the model's authority stops at the score.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Decision</th><th>Owner</th><th>Why</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Which signals to pull</td>
+            <td>LLM agent</td>
+            <td>Genuine orchestration. On a routine payment to a known payee it pulls none at all, and says why &#8212; that is the difference between an agent and a checklist.</td>
+          </tr>
+          <tr>
+            <td>The written explanation</td>
+            <td>LLM agent</td>
+            <td>Prose is what a language model is actually good at, and the reasoning trace is read by analysts, not machines.</td>
+          </tr>
+          <tr>
+            <td>The risk score</td>
+            <td>Scoring engine</td>
+            <td>Reproducible and auditable. Weights sit in one table that a compliance officer can review at a glance.</td>
+          </tr>
+          <tr>
+            <td>The outcome</td>
+            <td>Scoring engine</td>
+            <td>Derived from the score plus one policy rule about whether the customer is present.</td>
+          </tr>
+          <tr>
+            <td>Overriding a decline</td>
+            <td>Policy guard rail</td>
+            <td>If the model recommends declining while the customer is demonstrably present, policy holds the payment for a call instead, and records the disagreement. A false decline harms a real customer and does nothing to stop the coercion.</td>
+          </tr>
+          <tr>
+            <td>Insisting on evidence</td>
+            <td>Policy guard rail</td>
+            <td>If a transaction scores in the decline band but the agent skipped the location check, the engine pulls it. We never decline without the evidence that justifies declining.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================ SEQUENCE ============================ -->
+  <section>
+    <div>
+      <p class="eyebrow">How the components communicate</p>
+      <h2>End to end, in six steps</h2>
+    </div>
+    <ol class="flow">
+      <li><span><b>Merchant checkout &#8594; Decision API.</b> The payment gateway posts a webhook
+        for a submitted transaction to <code>POST /transactions/evaluate</code>, and the
+        payment is held pending a decision.</span></li>
+      <li><span><b>Decision API &#8594; Risk agent.</b> The transaction is persisted, then handed
+        to the Pydantic AI agent together with its context: amount, whether this beneficiary
+        has ever been paid before, and the local time.</span></li>
+      <li><span><b>Risk agent &#8594; Agent tools &#8594; CAMARA client.</b> The agent autonomously
+        selects which network signals justify their latency and calls them through the tool
+        layer. The agent itself issues no HTTP.</span></li>
+      <li><span><b>CAMARA client &#8594; Nokia Network as Code.</b> The selected signals are
+        queried in parallel behind a 3-second timeout. Any failure degrades to a cached
+        response that stays visibly labelled as cached.</span></li>
+      <li><span><b>Scoring engine &#8594; Outcome.</b> Observed facts become a 0&#8211;100 score, an
+        outcome, and a numbered reasoning trace &#8212; deterministically, with the policy guard
+        rails applied.</span></li>
+      <li><span><b>Voice layer &#8594; Decision log &#8594; Console.</b> A held payment triggers an
+        outbound call in the customer's language; the outcome resolves the transaction, and
+        every signal, decision and transcript streams to the fraud-ops console.</span></li>
+    </ol>
+
+    <div class="note">
+      <b>Measured, not projected.</b> All four CAMARA APIs are integrated and verified live
+      against the Nokia sandbox. Four signals pulled concurrently complete in 541 ms; a
+      clean payment reaches a decision in roughly 1.2 s end to end, having pulled no network
+      signals at all. 53 automated tests run with no API key and no network access.
+    </div>
+  </section>
+
+  <!-- ============================ COMPONENTS ============================ -->
+  <section>
+    <div>
+      <p class="eyebrow">Architecture components</p>
+      <h2>Layers and responsibilities</h2>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Component</th><th>Responsibility</th><th>Built with</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Input layer</td><td>Payment gateway webhook carrying transaction context; holds the payment pending a decision</td><td>FastAPI</td></tr>
+          <tr><td>Agent layer</td><td>Decides which CAMARA signals to pull and writes the analyst narrative</td><td>Pydantic AI &#183; Groq</td></tr>
+          <tr><td>Verification layer</td><td>Typed CAMARA clients with timeout, retry and labelled fallback caching</td><td>httpx &#183; Nokia Network as Code</td></tr>
+          <tr><td>Scoring engine</td><td>Deterministic weighting of observed signals into a score, an outcome and a trace</td><td>Python</td></tr>
+          <tr><td>Voice interface</td><td>Outbound multilingual call, scam-interrogation script, outcome classification</td><td>Vapi &#183; ElevenLabs &#183; Deepgram &#183; Whisper</td></tr>
+          <tr><td>Decision log</td><td>Immutable record of every API call, decision, rationale and transcript</td><td>PostgreSQL</td></tr>
+          <tr><td>Fraud-ops console</td><td>Live decision feed and reasoning-trace timeline for analysts</td><td>Next.js on Vercel</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    VerifiedCall &#183; Team antifraud &#183; American University of Sharjah, UAE<br>
+    Every component is drawn from the approved GSMA Resource &amp; Tooling Guide.<br>
+    CAMARA APIs: Call Forwarding Signal &#183; Device Roaming Status &#183; Location Verification &#183; SIM Swap.
+  </footer>
+
+</div>
