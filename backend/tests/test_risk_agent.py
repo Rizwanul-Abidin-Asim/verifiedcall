@@ -305,3 +305,50 @@ async def test_low_risk_never_triggers_the_extra_check(session, txn):
 
     assert decision.signals_pulled == ["call_forwarding"]
     assert decision.outcome is DecisionOutcome.APPROVE
+
+
+@respx.mock
+async def test_location_is_pulled_for_any_flagged_payment(session, txn):
+    """Regression. The rule used to gate on the decline threshold, which was circular:
+    a payment cannot reach that threshold without the location check. Live run scored 60
+    on one signal, never pulled location, and so could never decline."""
+    mock_sandbox(location="FALSE")
+    decision = await evaluate(
+        session, txn.id, context("18500.00"),
+        model=scripted_model(["check_call_forwarding_tool"]))
+
+    assert "location_verification" in decision.signals_pulled
+    assert decision.outcome is DecisionOutcome.DECLINE
+
+
+@respx.mock
+async def test_clean_payment_still_pulls_nothing_extra(session, txn):
+    """The rule must not creep into the fast path: below the flag threshold, no extra call."""
+    mock_sandbox(all_bad=False)
+    decision = await evaluate(
+        session, txn.id, context(amount="30.00", new_payee=False),
+        model=scripted_model([], outcome="approve"))
+
+    assert decision.signals_pulled == []
+    assert decision.outcome is DecisionOutcome.APPROVE
+
+
+@respx.mock
+async def test_fallback_tops_up_signals_the_agent_already_started(session, txn):
+    """A model that dies mid-run leaves partial evidence behind. The deterministic path
+    must complete the set rather than decide on whatever happened to arrive first."""
+    mock_sandbox(location="FALSE")
+
+    async def dies_after_one_tool(messages, info):
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart("check_call_forwarding_tool", {})])
+        raise RuntimeError("groq timed out mid-run")
+
+    decision = await evaluate(session, txn.id, context(),
+                              model=FunctionModel(dies_after_one_tool))
+
+    assert decision.agent_mode is AgentMode.DETERMINISTIC_FALLBACK
+    assert sorted(decision.signals_pulled) == [
+        "call_forwarding", "device_status", "location_verification", "sim_swap"]
+    assert decision.signals_pulled.count("call_forwarding") == 1, "no signal pulled twice"
+    assert decision.outcome is DecisionOutcome.DECLINE

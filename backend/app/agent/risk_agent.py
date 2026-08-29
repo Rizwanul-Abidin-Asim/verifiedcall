@@ -28,7 +28,7 @@ from app.agent.schemas import (
     TransactionContext,
 )
 from app.agent.scoring import (
-    DECLINE_AT_OR_ABOVE,
+    APPROVE_BELOW,
     build_trace,
     choose_outcome,
     customer_appears_absent,
@@ -105,44 +105,54 @@ def more_cautious(a: DecisionOutcome, b: DecisionOutcome) -> DecisionOutcome:
     return max(a, b, key=CAUTION_ORDER.index)
 
 
-async def _pull_all_signals(deps: AgentDeps) -> None:
-    """Deterministic path: pull every signal concurrently and record each one."""
+async def _pull_missing_signals(deps: AgentDeps) -> None:
+    """Deterministic path: make sure every signal is present, concurrently.
+
+    Tops up rather than starts fresh. A model that timed out halfway has usually already
+    collected one or two signals, and an earlier version skipped this entirely whenever
+    anything had been collected, which left the fallback deciding on partial evidence.
+    """
     msisdn = deps.context.signal_msisdn
     latitude, longitude = CITY_CENTRES.get(deps.expected_city, CITY_CENTRES["AE-DXB"])
+    already = {s.api_name for s in deps.collected}
 
-    results = await asyncio.gather(
-        check_call_forwarding(msisdn),
-        check_sim_swap(msisdn),
-        check_device_status(msisdn),
-        verify_location(msisdn, latitude, longitude),
-    )
-    payloads = [
-        {"phoneNumber": msisdn},
-        {"phoneNumber": msisdn, "maxAge": 240},
-        {"device": {"phoneNumber": msisdn}},
-        {"device": {"phoneNumber": msisdn},
-         "area": {"areaType": "CIRCLE",
-                  "center": {"latitude": latitude, "longitude": longitude},
-                  "radius": 50_000}},
+    wanted = [
+        ("call_forwarding", check_call_forwarding(msisdn), {"phoneNumber": msisdn}),
+        ("sim_swap", check_sim_swap(msisdn), {"phoneNumber": msisdn, "maxAge": 240}),
+        ("device_status", check_device_status(msisdn), {"device": {"phoneNumber": msisdn}}),
+        ("location_verification", verify_location(msisdn, latitude, longitude),
+         {"device": {"phoneNumber": msisdn},
+          "area": {"areaType": "CIRCLE",
+                   "center": {"latitude": latitude, "longitude": longitude},
+                   "radius": 50_000}}),
     ]
-    for signal, payload in zip(results, payloads, strict=True):
+    pending = [(name, coro, payload) for name, coro, payload in wanted if name not in already]
+    for _, coro, _ in [w for w in wanted if w[0] in already]:
+        coro.close()                      # never leave an un-awaited coroutine behind
+
+    if not pending:
+        return
+    results = await asyncio.gather(*(coro for _, coro, _ in pending))
+    for signal, (_, _, payload) in zip(results, pending, strict=True):
         await deps.capture(signal, payload)
 
 
-async def _ensure_evidence_before_declining(deps: AgentDeps) -> bool:
-    """Never decline without the one check that can justify declining.
+async def _ensure_location_before_acting(deps: AgentDeps) -> bool:
+    """On any flagged payment, make sure we have the check that decides what to do.
 
-    The agent is deliberately selective, and that is the point — but selectivity has a
-    floor. Decline is only defensible when the network says the device is not where the
-    payment claims, and if the agent skipped the location check we simply do not have
-    that evidence. Rather than decline on thinner grounds, or quietly downgrade a serious
-    case, the policy engine pulls the missing check itself.
+    Location is what separates the two actions: a device that is not where the payment
+    claims means decline, a device that is present means call the customer. Without it we
+    can only ever intervene, which quietly makes decline unreachable.
 
-    Costs one extra ~300ms call, and only on transactions already scoring in the decline
-    band. Returns True if a signal was added.
+    An earlier version of this gated on the decline threshold, which was circular: the
+    score cannot reach that threshold without the location check in the first place. A
+    live run caught it. So the floor is the flag threshold, not the decline threshold.
+
+    Clean payments are untouched, because they never reach it. Costs one extra ~300ms
+    call on payments we were going to hold anyway. Returns True if a signal was added.
     """
     score, _ = build_trace(deps.context, deps.collected)
-    if score < DECLINE_AT_OR_ABOVE:
+    if score < APPROVE_BELOW:
         return False
     if any(s.api_name == "location_verification" for s in deps.collected):
         return False
@@ -237,14 +247,14 @@ async def evaluate(
             timeout=settings.agent_timeout_s,
         )
         opinion: AgentOpinion = result.output
-        completed = await _ensure_evidence_before_declining(deps)
+        completed = await _ensure_location_before_acting(deps)
         note = ReasoningStep(
             step=0, kind="context",
             observed=f"Agent chose to pull {len(deps.collected)} of 4 available signals",
             rationale=opinion.why_these_signals + (
-                " The policy engine then added the location check, because this "
-                "transaction scored in the decline band and we do not decline a payment "
-                "without the evidence that justifies it." if completed else ""))
+                " The policy engine then added the location check, because this payment "
+                "was going to be held either way and location is what decides whether a "
+                "held payment is declined or verified by phone." if completed else ""))
         return _assemble(deps, opinion, started, AgentMode.LLM, [note])
 
     except Exception as exc:  # noqa: BLE001 — a live demo must not surface a stack trace
@@ -253,14 +263,13 @@ async def evaluate(
     # The model is unavailable, slow, or returned something unusable. Pull everything
     # and score it. Slower and less selective, but it always produces an answer.
     try:
-        if not deps.collected:
-            await _pull_all_signals(deps)
+        await _pull_missing_signals(deps)
     except Exception as exc:  # noqa: BLE001
         log.error("agent.signals_unavailable %r", exc)
 
     note = ReasoningStep(
         step=0, kind="context",
-        observed="Reasoning model unavailable — deterministic fallback used",
+        observed="Reasoning model unavailable, deterministic fallback used",
         rationale="The analyst model could not be reached, so every available signal was "
                   "pulled and scored by the deterministic engine. The decision is sound "
                   "but less selective than usual, and no written analyst summary is "

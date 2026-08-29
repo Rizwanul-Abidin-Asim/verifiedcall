@@ -30,6 +30,7 @@ dev = [
     "respx>=0.21.1",
     "aiosqlite>=0.20.0",
     "ruff>=0.7.0",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [build-system]

@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-120b"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
-    agent_timeout_s: float = 8.0
+    agent_timeout_s: float = 12.0  # Groq slows under burst; 8s tripped the fallback
 
     # --- Voice ---
     vapi_api_key: str = ""
