@@ -77,3 +77,35 @@ change. Gemini is configured but **not** viable as primary: its free tier allows
 ~5.3–6.7s. Latency matters on the approve path, which is the overwhelming majority of
 real traffic; a flagged payment is being held for a phone call anyway. Reducing the
 flagged-path time is a known tuning target, not a solved problem.
+
+## ADR-005 — Prompt size, and the free-tier ceiling we actually hit
+
+**Date:** 2026-08-29 · **Status:** accepted
+
+Live runs kept dropping into the deterministic fallback on the third and fourth
+scenario. Measured cause, from Groq's own rate-limit headers: the constraint is
+**tokens per minute, not requests**. The limit is **8,000 TPM per model** (requests were
+never close: 965 of 1,000 remaining while the token budget drained).
+
+One evaluation costs roughly 4,400 tokens across its two turns, because a tool-calling
+exchange resends the system prompt and the tool schemas on the second turn. That allows
+about **1.8 evaluations per minute**, which is why two succeed and the next two throttle.
+
+We trimmed the system prompt and the tool docstrings by 31% (2,512 to 1,738 tokens per
+request). Verified the agent still behaves: it pulls zero signals on a clean payment and
+still reaches decline on the device-elsewhere case. The approve path got faster,
+2,487ms to 1,469ms.
+
+That is not enough to fit four back-to-back evaluations, and cutting far enough to fit
+would mean removing the instructions that make the agent selective, which is the thing
+worth protecting. So:
+
+- **A demo paced by a human stays inside the limit.** Roughly 40 seconds between
+  scenarios is sufficient, which is slower than anyone clicks through a pitch anyway.
+- **When it does throttle, the deterministic fallback produces the correct outcome**,
+  pulls the full signal set, and says on the dashboard that it did so.
+
+Rejected: short-circuiting the LLM for obviously clean payments. It would save the most
+tokens on the most common case, but deciding without consulting the agent is exactly the
+rules-engine behaviour the project argues against, and we would rather pay the tokens
+than quietly become the thing we criticise.

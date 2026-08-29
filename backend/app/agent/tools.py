@@ -71,11 +71,9 @@ def _provenance(signal: SignalResult) -> str:
 async def check_call_forwarding_tool(ctx: RunContext[AgentDeps]) -> str:
     """Check whether the customer's incoming calls are being diverted.
 
-    The strongest single indicator of a scam in progress. If unconditional forwarding is
-    active, calls to the customer are being intercepted right now — meaning the bank
-    cannot reach them, and somebody else may be answering as them.
-
-    Worth calling on any payment that looks unusual. Costs about 300ms.
+    The strongest indicator of a scam in progress: if unconditional forwarding is active,
+    calls are being intercepted now and the bank could not reach the customer. Worth
+    calling on any payment that looks unusual. About 300ms.
     """
     deps = ctx.deps
     if (existing := _already_pulled(deps, "call_forwarding")) is not None:
@@ -97,12 +95,9 @@ async def check_call_forwarding_tool(ctx: RunContext[AgentDeps]) -> str:
 async def check_sim_swap_tool(ctx: RunContext[AgentDeps]) -> str:
     """Check whether the SIM behind this number was recently replaced.
 
-    Indicates one-time passcodes may be reaching someone else. Note this is weaker
-    evidence for APP fraud than for account takeover: in APP fraud the genuine customer
-    is the one authorising the payment, so a clean SIM does not mean the payment is safe.
-
-    Skip it if you have already established the payment needs a call anyway. Costs
-    about 300ms.
+    Means one-time passcodes may reach someone else. Weaker evidence for APP fraud than
+    for account takeover, because here the genuine customer is the one authorising, so a
+    clean SIM does not make the payment safe. About 300ms.
     """
     deps = ctx.deps
     if (existing := _already_pulled(deps, "sim_swap")) is not None:
@@ -118,12 +113,11 @@ async def check_sim_swap_tool(ctx: RunContext[AgentDeps]) -> str:
 
 
 async def check_device_roaming_tool(ctx: RunContext[AgentDeps]) -> str:
-    """Check whether the customer's device is on a foreign network, and which country.
+    """Check whether the device is on a foreign network, and which country.
 
-    A customer abroad is harder for their bank to reach and easier to pressure. Roaming
-    combined with a first-time beneficiary is the classic APP fraud shape.
-
-    Not worth calling on a routine payment to a known payee. Costs about 250ms.
+    A customer abroad is harder to reach and easier to pressure; roaming plus a
+    first-time payee is the classic shape. Not worth calling on a routine payment to a
+    known payee. About 250ms.
     """
     deps = ctx.deps
     if (existing := _already_pulled(deps, "device_status")) is not None:
@@ -142,12 +136,10 @@ async def check_device_roaming_tool(ctx: RunContext[AgentDeps]) -> str:
 async def verify_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
     """Check whether the device is in the area this payment claims to come from.
 
-    This is the check that distinguishes two opposite situations:
-      - device NOT there  -> somebody else is probably operating the account (theft)
-      - device IS there   -> the genuine customer is present, possibly being coached
-
-    Those call for opposite responses, so this is worth its latency whenever the other
-    signals look bad. Costs about 280ms.
+    Separates two opposite situations: device not there means somebody else is probably
+    operating the account, device there means the genuine customer is present and
+    possibly being coached. Worth its latency whenever the other signals look bad.
+    About 280ms.
     """
     deps = ctx.deps
     if (existing := _already_pulled(deps, "location_verification")) is not None:
