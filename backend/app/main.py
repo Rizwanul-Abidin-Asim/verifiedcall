@@ -11,6 +11,7 @@ from app.api.routes import decisions, stream, transactions
 from app.camara.base import close_client, get_client
 from app.config import settings
 from app.db.session import dispose_engine
+from app.voice import webhooks as voice_webhooks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +69,7 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
 app.include_router(transactions.router)
 app.include_router(decisions.router)
 app.include_router(stream.router)
+app.include_router(voice_webhooks.router)
 
 
 @app.get("/health", tags=["ops"])
