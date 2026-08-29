@@ -6,6 +6,7 @@ guarantees a decision even when the model or the network is down; this layer add
 persistence and the live feed around it.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -16,9 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.risk_agent import evaluate
 from app.agent.schemas import TransactionContext
 from app.api.schemas import EvaluateRequest, EvaluateResponse
+from app.config import settings
+from app.db.models import DecisionOutcome
 from app.db.session import get_session
 from app.services.audit import record_decision, record_transaction
 from app.services.events import broker
+from app.voice.service import run_mock_intervention, start_intervention
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
@@ -108,6 +112,19 @@ async def evaluate_transaction(
         "summary": decision.summary,
         "decided_at": record.decided_at.isoformat(),
     })
+
+    # A held payment gets a phone call. Placing it is deliberately after the response
+    # object is built and the decision is committed: the customer's payment is already
+    # held, so nothing about the call can change the decision we just recorded.
+    if decision.outcome is DecisionOutcome.INTERVENE:
+        try:
+            call = await start_intervention(session, txn)
+            await session.commit()
+            if call.is_mock and settings.voice_mock:
+                # Fire and forget. The checkout polls /voice/{id} or watches the stream.
+                asyncio.create_task(run_mock_intervention(txn.id))
+        except Exception as exc:  # noqa: BLE001 - the decision stands even if dialling fails
+            log.error("api.intervention_failed txn=%s %r", txn.id, exc)
 
     log.info("api.decided txn=%s outcome=%s score=%d latency_ms=%.0f signals=%d",
              txn.id, decision.outcome, decision.risk_score,

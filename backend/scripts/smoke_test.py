@@ -41,6 +41,10 @@ def check(condition: bool, label: str, detail: str = "") -> bool:
     return condition
 
 
+def resolution_label(voice: dict) -> str:
+    return voice.get("resolution", "?")
+
+
 def body(amount, signal_msisdn, new_payee, hour, call_number="+971500000000"):
     return {
         "amount": amount, "currency": "AED", "merchant_name": "Direct transfer",
@@ -149,6 +153,36 @@ async def main(url: str) -> int:
                       "every signal is labelled live or fallback")
         missing = await c.get(f"{url}/decisions/00000000-0000-0000-0000-000000000000")
         check(missing.status_code == 404, "unknown decision id returns 404, not 500")
+
+        print("\nvoice intervention")
+        held_txn = None
+        for did in decision_ids:
+            detail = (await c.get(f"{url}/decisions/{did}")).json()
+            if detail.get("outcome") == "intervene":
+                held_txn = detail["transaction"]["id"]
+                break
+
+        if not check(held_txn is not None, "a held payment exists to call about"):
+            pass
+        else:
+            resolved = None
+            for _ in range(25):
+                vr = await c.get(f"{url}/voice/{held_txn}")
+                if vr.status_code == 200 and vr.json().get("status") == "completed":
+                    resolved = vr.json()
+                    break
+                await asyncio.sleep(1.0)
+            if check(resolved is not None, "the held payment triggered a call that resolved"):
+                check(resolved["outcome"] in
+                      {"scam_detected", "confirmed_legitimate", "no_answer", "inconclusive"},
+                      "the call reached an outcome",
+                      f"{resolved['outcome']} -> {resolution_label(resolved)}")
+                check(resolved["is_mock"] is True,
+                      "the call is labelled simulated, not passed off as real")
+                check(bool(resolved["answers"]), "per-question answers were recorded")
+                check(resolution_label(resolved) != "released"
+                      or resolved["outcome"] == "confirmed_legitimate",
+                      "money is only released on a clean call")
 
         print("\nlive feed")
         await asyncio.sleep(1.5)

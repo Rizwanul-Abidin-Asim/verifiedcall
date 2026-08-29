@@ -54,3 +54,6 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 # Alembic writes these; hand-wrapping them would only cause churn on the next autogenerate.
 "app/db/migrations/versions/*" = ["E501"]
+# Arabic, Hindi and Urdu run wider per character than Latin; wrapping mid-sentence to
+# satisfy a column count would make the script harder for a native speaker to review.
+"app/voice/scripts.py" = ["E501"]

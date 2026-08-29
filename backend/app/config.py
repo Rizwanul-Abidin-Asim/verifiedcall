@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     voice_mock: bool = True
     """Simulate Vapi call outcomes instead of placing (and paying for) real calls."""
 
+    voice_mock_seconds: float = 4.0
+    """How long a simulated call appears to take, so the dashboard visibly shows one in
+    progress rather than flicking straight to the result."""
+
     # --- Behaviour ---
     camara_timeout_s: float = 3.0
     camara_max_retries: int = 2
