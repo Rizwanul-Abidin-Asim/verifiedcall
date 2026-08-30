@@ -42,6 +42,9 @@ from cache and the dashboard says so.
 - **Agent slow** → it falls back automatically and the dashboard shows the mode. Say so:
   "that is the fallback, and it still reached the right answer."
 - **Frontend cannot reach the API** → the checkout says plainly that nothing was charged.
+- **Live voice mode** → keep `VOICE_MOCK=true` for the pitch. A free Vapi number cannot
+  dial internationally, so on this account a live call fails, correctly, with the payment
+  left held. That is worth showing as a failure story if asked, but not as the demo.
 
 ## Questions to expect
 

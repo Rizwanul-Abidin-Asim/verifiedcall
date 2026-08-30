@@ -113,6 +113,19 @@ That dials an actual phone and spends Vapi credits, which is why it is a separat
 rather than a flag. It drives demo scenario 3: the network signals still come from the
 sandbox number, only the call goes to your phone.
 
+**A free Vapi number cannot call internationally.** We hit this with a US trial number
+dialling a UAE phone, and the API is explicit about it:
+
+```
+400 Couldn't start call. Free Vapi numbers do not support international calls.
+```
+
+So a real call needs either a paid Vapi plan or a number in the country you are dialling.
+The code path is complete and was exercised against the live API; what stops it is a
+plan limit, not the integration. When it happens the payment stays held, the call is
+recorded as failed with the provider's reason, and the dashboard shows it as a real
+attempt rather than hiding it.
+
 No public URL or tunnel is needed. Vapi can report a call two ways and we use the one
 that works from a laptop, polling `GET /call/{id}` until the call ends rather than
 waiting for a webhook to arrive. The webhook route still works for a deployed instance,
@@ -198,6 +211,11 @@ The audit trail, the API and the console are real.
   consent token only the handset can obtain over mobile data. We replaced it with Call
   Forwarding Signal, which suits this problem better. `scripts/spikes/probe_number_verification.py`
   is kept as evidence.
+- **A free Vapi number cannot dial internationally**, so the live call was verified up to
+  the provider's own plan limit rather than through to a ringing UAE handset. Everything
+  either side of that boundary is exercised: the assistant is validated against Vapi's
+  schema, the call is placed against the live API, and the rejection is handled the way
+  any call failure is, by leaving the payment held.
 - **Location Verification ignores the area we send.** The sandbox returns the same verdict
   for Dubai, Bonn or Tokyo. Our client sends a real `CIRCLE` area and would work against a
   live network, but no geofence is being computed in the demo.
