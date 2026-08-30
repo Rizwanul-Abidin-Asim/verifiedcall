@@ -338,3 +338,22 @@ async def test_health_reports_switches(client):
     assert body["status"] == "ok"
     assert set(body) >= {"demo_mode", "voice_mock", "llm_provider"}
     assert "key" not in json.dumps(body).lower()
+
+
+async def test_a_server_error_still_carries_cors_headers(client, monkeypatch):
+    """Regression. The 500 was produced outside the CORS layer, so the browser reported a
+    CORS failure and hid the real cause. Found by the checkout showing a CORS error when
+    the database was down."""
+    async def explode(*args, **kwargs):
+        raise RuntimeError("database is gone")
+
+    monkeypatch.setattr("app.api.routes.transactions.record_transaction", explode)
+    r = await client.post("/transactions/evaluate",
+                          json=payload("100.00", CLEAN, False, 12),
+                          headers={"Origin": "http://127.0.0.1:3000"})
+
+    assert r.status_code == 500
+    assert r.json()["error"] == "internal_error"
+    assert "database is gone" not in r.text, "internal detail must not reach the browser"
+    assert r.headers.get("access-control-allow-origin") == "http://127.0.0.1:3000", (
+        "without this header the browser shows a CORS error instead of the real one")

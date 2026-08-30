@@ -42,6 +42,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+@app.middleware("http")
+async def catch_everything(request: Request, call_next):
+    """Turn any unhandled failure into a clear JSON error.
+
+    This is a middleware rather than only an exception handler, and it is registered
+    BEFORE the CORS middleware on purpose. Starlette builds the stack so the last
+    middleware added sits outermost, and a response produced by an exception handler is
+    generated outside the CORS layer, so it carries no Access-Control-Allow-Origin
+    header. The browser then reports a CORS failure and the real cause is invisible.
+
+    Found exactly that way: the database was down, and the checkout showed a CORS error
+    instead of "we could not reach the payment service". Catching in here means the
+    error response passes back out through CORS and the frontend can read it.
+    """
+    try:
+        return await call_next(request)
+    except Exception as exc:  # noqa: BLE001 - the demo surface never sees a traceback
+        log.exception("api.unhandled path=%s %r", request.url.path, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error",
+                     "detail": "The service could not complete this request."},
+        )
+
+
+# Added last, so it wraps everything above and labels error responses too.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -53,12 +79,8 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
-    """Nothing unhandled reaches the frontend as a stack trace.
-
-    The checkout and the dashboard are the demo surface. A clear error state is
-    recoverable on stage; a 500 page with a traceback is not.
-    """
-    log.exception("api.unhandled path=%s %r", request.url.path, exc)
+    """Backstop for anything the middleware cannot catch."""
+    log.exception("api.unhandled_outer path=%s %r", request.url.path, exc)
     return JSONResponse(
         status_code=500,
         content={"error": "internal_error",
