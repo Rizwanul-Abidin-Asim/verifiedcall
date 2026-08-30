@@ -18,10 +18,10 @@ script **before the payment settles**.
 | Layer | Choice |
 |---|---|
 | Backend | Python 3.11+, FastAPI, SQLAlchemy, Postgres |
-| Agent | Pydantic AI, Groq (`llama-3.3-70b-versatile`) |
+| Agent | Pydantic AI, Groq (`openai/gpt-oss-120b`; Llama 3.3 was retired mid-build) |
 | Voice | Vapi (telephony), ElevenLabs (TTS), Deepgram (STT) |
 | Network APIs | CAMARA via Nokia Network-as-Code |
-| Frontend | Next.js 14 App Router on Vercel |
+| Frontend | Next.js 15 App Router on Vercel |
 | Local infra | docker-compose: postgres 16 + redis 7 |
 
 ## Standing rules
@@ -64,26 +64,30 @@ verified-call/
 │   │   ├── camara/                  # ONE module per API, thin + typed
 │   │   │   ├── base.py              # shared auth, retry, timeout, fallback wrapper
 │   │   │   ├── sim_swap.py
-│   │   │   ├── number_verification.py
+│   │   │   ├── call_forwarding.py   # replaced Number Verification; see ADR in decisions.md
 │   │   │   ├── location_verification.py
 │   │   │   ├── device_status.py
-│   │   │   └── fallback.py          # cached responses for demo resilience
+│   │   │   ├── models.py            # typed signal results
+│   │   │   └── fallback.py          # cached responses, always flagged
 │   │   │
 │   │   ├── agent/
 │   │   │   ├── risk_agent.py        # Pydantic AI agent definition
 │   │   │   ├── tools.py             # CAMARA calls exposed as agent tools
 │   │   │   ├── prompts.py           # system prompt + scam-pattern heuristics
+│   │   │   ├── scoring.py           # deterministic weights; the model does NOT score
 │   │   │   └── schemas.py           # RiskDecision, SignalResult, ReasoningStep
 │   │   │
 │   │   ├── voice/
-│   │   │   ├── vapi_client.py       # place call, poll status
-│   │   │   ├── scripts.py           # scam-interrogation scripts per language
-│   │   │   └── webhooks.py          # call outcome → transaction resolution
+│   │   │   ├── vapi_client.py       # place call, plus the mock-mode simulator
+│   │   │   ├── scripts.py           # interrogation script in EN, AR, HI, UR
+│   │   │   ├── classify.py          # answers + hesitation timing -> outcome
+│   │   │   ├── service.py           # orchestrates an intervention
+│   │   │   └── webhooks.py          # call outcome -> transaction resolution
 │   │   │
 │   │   ├── api/routes/
 │   │   │   ├── transactions.py      # POST /transactions/evaluate (gateway webhook)
 │   │   │   ├── decisions.py         # GET  /decisions, /decisions/{id}
-│   │   │   ├── voice.py             # POST /voice/webhook
+│   │   │   ├── metrics.py           # GET /metrics, computed from the decision log
 │   │   │   └── stream.py            # SSE feed for the live dashboard
 │   │   │
 │   │   ├── db/
@@ -91,10 +95,12 @@ verified-call/
 │   │   │   ├── session.py
 │   │   │   └── migrations/
 │   │   └── services/
-│   │       └── audit.py             # every API call + decision persisted
+│   │       ├── audit.py             # every API call + decision persisted
+│   │       └── events.py            # in-process fan-out for the live feed
 │   │
 │   ├── scripts/
-│   │   ├── spikes/                  # PHASE 1 throwaway probes (keep them — judges like them)
+│   │   ├── spikes/                  # PHASE 1 probes, kept as evidence
+│   │   ├── smoke_test.py            # run this before pitching
 │   │   └── seed_demo.py             # loads the 4 demo scenarios
 │   └── tests/
 │
@@ -111,10 +117,15 @@ side effect, because the audit trail is scored.
 
 ## Demo scenarios (the four we pitch)
 
-1. Clean transaction, all signals green → **approve**
-2. Recent SIM swap + new beneficiary → **decline**
-3. Roaming device + large amount + new beneficiary → **intervene** ← headline APP fraud case
-4. Location mismatch, moderate amount → **intervene**
+Signal profiles come from the measured sandbox matrix in `docs/camara-findings.md`.
+
+1. `+99999991001` clean, known payee, small amount -> **approve** (agent pulls nothing)
+2. `+99999991000` all signals bad, device NOT where the payment claims -> **decline**
+3. `+99999991004` all signals bad, device IS where expected -> **intervene** <- headline
+4. `+99999991003` all signals bad, partial location match -> **intervene**
+
+Scenarios 2 and 3 carry the pitch: same signals, opposite responses, because location is
+what separates theft from coercion.
 
 ## Running locally
 
@@ -136,7 +147,19 @@ Full detail in `docs/hackathon-requirements.md` — read it before any scoping d
 
 ## Current status
 
-Phase 0 complete: skeleton, config, health endpoint.
-Next: **Phase 1 — probe the Nokia NaC sandbox** and fill in `docs/camara-findings.md`.
-Nothing in `app/camara/` should be written until that file has real recorded shapes in it.
-**Blocked on:** `NOKIA_NAC_API_KEY` from the Nokia console (human step).
+Backend and frontend both complete and verified end to end.
+
+| Step | State |
+|---|---|
+| CAMARA client layer, audit trail, risk agent | done |
+| Decision API, read endpoints, SSE feed | done |
+| Voice intervention (mock mode) | done |
+| Fraud-ops console and demo checkout | done |
+| Metrics, DEMO_MODE, smoke test | done |
+| README, architecture, demo script | done |
+
+136 tests pass with no API key and no network. `scripts/smoke_test.py` checks everything
+end to end against a running server.
+
+Outstanding, needs a human: the Arabic, Hindi and Urdu voice scripts have not been
+reviewed by native speakers, and a Vapi account is needed before any real call is placed.

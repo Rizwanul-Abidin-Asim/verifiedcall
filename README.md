@@ -1,28 +1,224 @@
 # VerifiedCall
 
-> Judge-facing README is written last (PROMPT 10). This is a stub so the repo isn't bare.
+**Team antifraud · American University of Sharjah**
+GSMA MENA Ignite Hackathon · Theme 4, Secure Fintech, Payments and Anti-Fraud Innovation
+GSMA pillar: Connectivity for Good
 
-Detecting **authorised push payment (APP) fraud** — the scam where the victim, under
-social-engineering pressure from someone impersonating their bank, sends the money
-themselves. The transaction is correctly authenticated, so conventional SIM-swap fraud
-tooling sees nothing wrong.
+VerifiedCall goes after the kind of fraud where the customer is the one pressing send.
 
-VerifiedCall scores the transaction with CAMARA network signals, and when risk is high an
-AI voice agent calls the customer in their own language and runs a scam-interrogation
-script before the payment settles.
+---
 
-Built for the **GSMA MENA Ignite Hackathon**, Theme 4 — Secure Fintech, Payments &
-Anti-Fraud.
+## The problem
 
-See [CLAUDE.md](CLAUDE.md) for the stack, layout, and working rules.
+In authorised push payment (APP) fraud, somebody phones the customer, says they are from
+their bank or the police, and talks them into moving money to a "safe account". Nothing
+gets hacked. It is the customer's phone, their login, their fingerprint, their payment.
 
-## Quickstart
+So the bank's fraud engine looks at the transaction, finds nothing wrong, and lets it
+through. Every check it runs is asking *"is this really you?"*, and the answer genuinely
+is yes.
+
+That gap matters here in particular. A lot of people in the UAE send money abroad
+regularly, often in a hurry, and they are targeted in languages their bank does not
+operate in.
+
+## What we do about it
+
+We sit between the payment being submitted and the money leaving. The gateway holds the
+transfer while we decide.
+
+1. An agent reads the transaction and decides **which** mobile network checks are worth
+   running. On a small payment to a regular payee it pulls nothing and says why.
+2. The checks it chose run in parallel against CAMARA APIs on Nokia Network as Code.
+3. A fixed weighting table turns what came back into a score and an outcome. The model
+   picks the checks and writes the explanation; it does not produce the number.
+4. If it looks like coercion, we hold the payment and **phone the customer in their own
+   language** before the money moves.
+
+### The idea it rests on
+
+Theft and coercion throw off identical signals. What separates them is where the phone is.
+
+| Network says | Reading | Action |
+|---|---|---|
+| Device is **not** where the payment claims | Somebody else is in the account | **Decline** |
+| Device **is** exactly where expected, calls diverted | The customer is doing this with someone in their ear | **Hold and call** |
+
+No single API tells you which of those you are looking at. That is the combined benefit.
+
+---
+
+## The four CAMARA APIs, and why each one
+
+| API | The question | Why it earns its place |
+|---|---|---|
+| **Call Forwarding Signal** | Are their calls being diverted? | Highest weighted. A diverted line means the scam is happening *now*, and the bank's own callback would never reach them. |
+| **Location Verification** | Is the phone where the payment claims? | The tie-breaker. Decides whether a held payment is declined or verified by phone. |
+| **Device Roaming Status** | Is the customer abroad and isolated? | Roaming plus a first-time payee is the classic shape. |
+| **SIM Swap** | Could OTPs be reaching someone else? | Deliberately weighted *lower* than most fraud systems would, because in APP fraud the genuine customer is the one authorising. |
+
+Four APIs across two categories, all verified working against the Nokia sandbox.
+
+---
+
+## Running it
 
 ```bash
-cp .env.example .env      # fill in credentials
-docker compose up -d      # postgres 16 + redis 7
+git clone https://github.com/Rizwanul-Abidin-Asim/verifiedcall
+cd verifiedcall
+cp .env.example .env          # fill in the keys listed below
+
+docker compose up -d          # postgres 16 + redis 7
+
 cd backend
-uv sync --extra dev
-uv run uvicorn app.main:app --reload
-curl http://127.0.0.1:8000/health
+uv sync --extra dev           # or: pip install -e ".[dev]"
+uv run alembic upgrade head
+uv run uvicorn app.main:app --port 8000
+
+cd ../frontend                # in a second terminal
+npm install
+npm run dev                   # http://localhost:3000
 ```
+
+Open **http://localhost:3000/checkout**, pick scenario 3, and pay. Then watch
+**/dashboard**.
+
+No Docker? The whole thing runs on SQLite:
+
+```bash
+DATABASE_URL="sqlite+aiosqlite:///./demo.db" uv run alembic upgrade head
+DATABASE_URL="sqlite+aiosqlite:///./demo.db" uv run uvicorn app.main:app --port 8000
+```
+
+### Credentials
+
+| Variable | Needed for | Free? |
+|---|---|---|
+| `NOKIA_NAC_API_KEY`, `NOKIA_NAC_BASE_URL` | The four CAMARA APIs | Yes, Simulator plan |
+| `GROQ_API_KEY` | The agent | Yes |
+| `GEMINI_API_KEY` | Optional fallback provider | Yes |
+| `VAPI_API_KEY`, `VAPI_PHONE_NUMBER_ID` | **Real** phone calls only | Not required |
+
+`VOICE_MOCK=true` is the default, so everything runs end to end with no Vapi account.
+
+### Before a demo
+
+```bash
+uv run pytest                                  # 136 tests, no API key or network needed
+uv run python scripts/smoke_test.py            # end to end against a running server
+```
+
+The smoke test checks the four scenarios, a forced network outage, both read endpoints,
+the metrics, the voice intervention and the live feed. It fails loudly and says what
+broke.
+
+`DEMO_MODE=true` forces cached CAMARA responses, so the pitch has a guaranteed-working
+path if the sandbox is down. Everything it serves is still labelled as cached.
+
+---
+
+## Test numbers
+
+Signals are keyed to the number, as Nokia's sandbox does:
+
+| `signal_msisdn` | Profile |
+|---|---|
+| `+99999991001` | all clean |
+| `+99999991000` | all bad, device **not** in the expected area |
+| `+99999991004` | all bad, device **is** in the expected area |
+| `+99999991003` | all bad, partial location match |
+| `+99999990500` | forces HTTP 500 on all four APIs |
+
+Simulated calls follow the same convention on the number being *called*:
+
+| `customer_msisdn` ends | Scripted customer | Outcome |
+|---|---|---|
+| `0` | admits they were told to pay | scam detected, blocked |
+| `1` | answers cleanly | legitimate, released |
+| `2` | denies it, but hesitates | inconclusive, held for an analyst |
+| `9` | does not pick up | no answer, held |
+
+---
+
+## Measured, not estimated
+
+Run `GET /metrics` for live figures. As of the last full run:
+
+- **4 of 4** CAMARA APIs integrated and verified against the live sandbox
+- **541 ms** for all four network signals pulled concurrently
+- **~1.2–2.5 s** end to end on the approve path
+- **136** automated tests, runnable with no API key and no network
+- **4** languages in the voice script
+
+---
+
+## What is real, and what is not
+
+We would rather say this ourselves than have it found.
+
+**Real.** The CAMARA calls are real HTTPS requests to Nokia's platform with real auth and
+real latency. The agent is a real model making decisions we do not control in advance.
+The audit trail, the API and the console are real.
+
+**Simulated, and labelled as such.**
+
+- **The network data.** Nokia has no MENA operator live and the free plan is Simulator
+  mode. The API, auth, latency and error handling are real; the underlying network is not.
+- **The bank.** The checkout is ours. It sends exactly the webhook a real gateway would.
+- **Holding the money.** No money moves. The hold is a state in our database.
+- **The phone call.** `VOICE_MOCK=true` scripts the customer's answers. Nothing dials.
+- **The demo seam.** Sandbox numbers are not real phones and a real phone has no sandbox
+  signals, so in a demo the number we look signals up against differs from the number we
+  would call. The dashboard says so on every affected transaction rather than implying
+  one device.
+
+**Limitations we found and designed around.**
+
+- **Number Verification cannot be called from a server.** It returns 401 and needs a
+  consent token only the handset can obtain over mobile data. We replaced it with Call
+  Forwarding Signal, which suits this problem better. `scripts/spikes/probe_number_verification.py`
+  is kept as evidence.
+- **Location Verification ignores the area we send.** The sandbox returns the same verdict
+  for Dubai, Bonn or Tokyo. Our client sends a real `CIRCLE` area and would work against a
+  live network, but no geofence is being computed in the demo.
+- **The sandbox is effectively binary.** Only one number is clean. A mixed profile such as
+  "SIM clean but calls forwarded" cannot be demonstrated on live sandbox data.
+- **Groq's free tier allows about 1.8 evaluations per minute** (8,000 tokens per minute
+  per model). A human-paced demo stays inside it; firing scenarios back to back does not,
+  and then the deterministic fallback answers instead and says it did.
+
+**⚠️ Not yet reviewed.** The Arabic, Hindi and Urdu scripts in `app/voice/scripts.py` were
+written during the build and **have not been checked by native speakers**. They must be
+before any real customer hears them. The Arabic is Modern Standard on purpose: dialect
+synthesis is poor enough that a bad Gulf accent would sound less trustworthy than clear MSA.
+
+---
+
+## Repository
+
+```
+docs/camara-findings.md     Ground truth: observed request and response shapes, measured
+docs/decisions.md           Why we built it this way, including what we rejected
+docs/architecture.md        Component map
+backend/app/camara/         One thin typed module per API, plus labelled fallback cache
+backend/app/agent/          Tools, prompts, deterministic scoring, the agent itself
+backend/app/voice/          Scripts in four languages, classification, the call
+backend/app/services/       Audit trail and the live event broker
+backend/scripts/spikes/     The Phase 1 probes, kept
+frontend/app/checkout/      The demo surface
+frontend/app/dashboard/     The fraud-ops console
+```
+
+Two rules the code holds to, both enforced by tests: **every CAMARA call and every
+decision goes through the audit trail**, and **a cached response is labelled as cached
+everywhere it appears**.
+
+Built with Pydantic AI, Groq, Vapi, ElevenLabs, Deepgram, Whisper, FastAPI, PostgreSQL
+and Next.js. All from the approved Resource and Tooling Guide.
+
+## Team
+
+Ahmad Abu Alarjah on network and CAMARA architecture, Khader Kheirallah on network
+signals and cloud, Fadil Pasha on the backend, decision API and audit trail, Rizwanul
+Asim across the full stack covering the agent, API, console and voice, Ryhan Nijam on
+voice intervention and testing.
