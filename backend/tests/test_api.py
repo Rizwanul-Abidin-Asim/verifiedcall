@@ -357,3 +357,50 @@ async def test_a_server_error_still_carries_cors_headers(client, monkeypatch):
     assert "database is gone" not in r.text, "internal detail must not reach the browser"
     assert r.headers.get("access-control-allow-origin") == "http://127.0.0.1:3000", (
         "without this header the browser shows a CORS error instead of the real one")
+
+
+@respx.mock
+async def test_metrics_are_computed_from_the_log_not_claimed(client):
+    sandbox(STATES)
+    await client.post("/transactions/evaluate", json=payload("240.00", CLEAN, False, 14))
+    await client.post("/transactions/evaluate", json=payload("18500.00", ELSEWHERE, True, 23))
+
+    m = (await client.get("/metrics")).json()
+    assert m["decisions"]["total"] == 2
+    assert m["decisions"]["by_outcome"]["approve"] >= 1
+    assert m["camara"]["apis_integrated"] == 4
+    assert m["camara"]["categories_spanned"] == 2
+    assert m["voice"]["languages_supported"] == 4
+    assert set(m["voice"]["languages"]) == {"ar", "en", "hi", "ur"}
+    assert m["added_latency_ms"]["approve_path_median"] is not None
+    assert m["camara"]["served_from_cache_pct"] == 0.0
+    assert "key" not in json.dumps(m).lower()
+
+
+@respx.mock
+async def test_metrics_report_cache_use_honestly(client):
+    for path in (f"{CF}/unconditional-call-forwardings", f"{SS}/check", ROAM, LOC):
+        respx.post(f"{BASE_URL}{path}").respond(500, json={"detail": "down"})
+    await client.post("/transactions/evaluate", json=payload("42000.00", AT_HOME, True, 23))
+
+    m = (await client.get("/metrics")).json()
+    assert m["camara"]["served_from_cache_pct"] == 100.0
+    assert m["decisions"]["used_fallback"] == 1
+
+
+@respx.mock
+async def test_demo_mode_never_touches_the_network(client, monkeypatch):
+    """The guaranteed-working path for a live pitch: cached data, no sandbox dependency,
+    and still labelled as cached so nothing is misrepresented."""
+    monkeypatch.setattr(settings, "demo_mode", True)
+    route = respx.post(f"{BASE_URL}{SS}/check").respond(json={"swapped": False})
+
+    r = await client.post("/transactions/evaluate", json=payload("42000.00", AT_HOME, True, 23))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["used_fallback"] is True
+    assert route.call_count == 0, "DEMO_MODE must not reach the network at all"
+
+    detail = (await client.get(f"/decisions/{body['decision_id']}")).json()
+    assert all(s["source"] == "fallback" for s in detail["signal_calls"])
+    assert all("DEMO_MODE" in (s["fallback_reason"] or "") for s in detail["signal_calls"])
