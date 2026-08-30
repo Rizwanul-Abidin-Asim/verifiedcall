@@ -26,8 +26,8 @@ import uuid
 import httpx
 
 from app.config import settings
-from app.voice.classify import Answer, Assessment, Reply, assess, interpret
-from app.voice.scripts import SPEECH_LOCALE, Language, Script, script_for
+from app.voice.classify import HESITATION_MS, Answer, Assessment, Reply, assess, interpret
+from app.voice.scripts import SCRIPTS, SPEECH_LOCALE, Language, Script, script_for
 
 log = logging.getLogger("voice.client")
 
@@ -92,8 +92,38 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
     """
     locale = SPEECH_LOCALE[script.language]
     questions = "\n".join(f"{i}. {q.text}" for i, q in enumerate(script.questions, 1))
+    # Ask Vapi to extract the three answers for us. Shapes confirmed against their
+    # OpenAPI spec: the result lands in call.analysis.structuredData.
+    answer_schema = {
+        "type": "object",
+        "properties": {
+            q.key: {
+                "type": "string",
+                "enum": ["yes", "no", "unclear"],
+                "description": f"How the customer answered: {q.text}",
+            }
+            for q in script.questions
+        },
+        "required": [q.key for q in script.questions],
+    }
+
     return {
         "firstMessage": script.rendered_opening(amount, currency, beneficiary),
+        "analysisPlan": {
+            "structuredDataPlan": {
+                "enabled": True,
+                "schema": answer_schema,
+                "messages": [{
+                    "role": "system",
+                    "content": (
+                        "Read the transcript and record how the customer answered each "
+                        "question. Use exactly yes, no, or unclear. Use unclear when they "
+                        "did not answer, changed the subject, or gave an answer that is "
+                        "not a yes or a no. Do not infer an answer they did not give."
+                    ),
+                }],
+            },
+        },
         "model": {
             "provider": "groq",
             "model": settings.groq_model,
@@ -158,10 +188,158 @@ async def place_call(
                             language=script.language)
 
 
+async def poll_call(call_id: str, *, timeout_s: int = 180) -> dict | None:
+    """Wait for a real call to finish by polling, instead of waiting on a webhook.
+
+    A webhook would need this machine to be publicly reachable, which during a demo
+    means running a tunnel. Polling needs nothing, and Vapi exposes GET /call/{id} with
+    a status enum that reaches "ended". The webhook route still works for anyone who
+    does have a public URL; whichever arrives first resolves the call.
+    """
+    headers = {"Authorization": f"Bearer {settings.vapi_api_key}"}
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                response = await client.get(f"{VAPI_BASE}/call/{call_id}", headers=headers)
+            except httpx.HTTPError as exc:
+                log.warning("voice.poll_error call=%s %r", call_id, exc)
+                await asyncio.sleep(3)
+                continue
+            if response.is_success:
+                body = response.json()
+                status = body.get("status")
+                if status in ("ended", "not-found"):
+                    log.info("voice.poll_done call=%s status=%s reason=%s",
+                             call_id, status, body.get("endedReason"))
+                    return body
+                log.info("voice.poll call=%s status=%s", call_id, status)
+            else:
+                log.warning("voice.poll_http call=%s %s", call_id, response.status_code)
+            await asyncio.sleep(3)
+    log.warning("voice.poll_timeout call=%s after %ds", call_id, timeout_s)
+    return None
+
+
+def response_gaps(messages: list) -> list[int]:
+    """Milliseconds between the assistant finishing a turn and the customer starting.
+
+    This is the hesitation signal, and it is the one part of the call that does not
+    depend on the transcript being correct. Returned in order.
+
+    If the message list cannot be aligned we return nothing rather than a guess, and
+    hesitation simply does not fire. A wrong timing is worse than no timing.
+    """
+    def spoken_until(item: dict) -> float | None:
+        """When a turn stopped, in seconds from the start of the call."""
+        start = item.get("secondsFromStart")
+        if start is None:
+            return None
+        # duration is milliseconds; time and endTime are epoch milliseconds. Either
+        # gives the length of the turn, and we only ever need the length.
+        length_ms = item.get("duration")
+        if length_ms is None and item.get("endTime") is not None and item.get("time") is not None:
+            length_ms = item["endTime"] - item["time"]
+        return float(start) + (float(length_ms) / 1000 if length_ms is not None else 0.0)
+
+    gaps: list[int] = []
+    asked_at: float | None = None
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role in ("bot", "assistant"):
+            asked_at = spoken_until(item)
+        elif role == "user" and asked_at is not None:
+            start = item.get("secondsFromStart")
+            if start is not None:
+                gaps.append(max(0, round((float(start) - asked_at) * 1000)))
+            asked_at = None
+    return gaps
+
+
+def answers_from_structured(data, language: Language,
+                            gaps: list[int] | None = None) -> list[Answer]:
+    """Turn Vapi's extraction into our answer records.
+
+    Two shapes are accepted. The flat {question_key: "yes"} is what our analysis plan
+    asks for. The list of per-question objects is what an assistant tool call would
+    publish, and is kept so an existing webhook payload still parses.
+
+    Timing never comes from the model. It is measured from the transcript, because a
+    model asked how long someone paused will happily invent a number.
+    """
+    if isinstance(data, list):
+        answers: list[Answer] = []
+        for item in data:
+            if not isinstance(item, dict) or not item.get("question_key"):
+                continue
+            answers.append(interpret(
+                question_key=str(item["question_key"]), language=language,
+                heard=item.get("heard") or item.get("transcript"),
+                keypad=str(item["keypad"]) if item.get("keypad") is not None else None,
+                response_ms=int(item.get("response_ms") or 0),
+            ))
+        return answers
+
+    if not isinstance(data, dict):
+        return []
+
+    questions = SCRIPTS[language].questions
+    # The questions are the closing exchanges of the call, so the last N gaps are the
+    # ones that belong to them; anything earlier is the customer replying to the
+    # opening. If there are fewer gaps than questions we cannot say which is which,
+    # so we record no timing rather than an alignment we are guessing at.
+    usable = gaps and len(gaps) >= len(questions)
+    aligned = gaps[-len(questions):] if usable else [0] * len(questions)
+
+    answers = []
+    for index, question in enumerate(questions):
+        raw = data.get(question.key)
+        if raw is None:
+            continue
+        try:
+            reply = Reply(str(raw).strip().lower())
+        except ValueError:
+            reply = Reply.UNCLEAR
+        ms = aligned[index]
+        answers.append(Answer(question_key=question.key, reply=reply, response_ms=ms,
+                              heard=str(raw), hesitant=ms >= HESITATION_MS))
+    return answers
+
+
+def transcript_of(body: dict) -> str | None:
+    """A readable transcript, preferring the provider's own if it sent one."""
+    existing = body.get("transcript")
+    if isinstance(existing, str) and existing.strip():
+        return existing
+    lines = [
+        f"{item.get('role')}: {item.get('message')}"
+        for item in body.get("messages") or []
+        if isinstance(item, dict) and item.get("role") != "system" and item.get("message")
+    ]
+    return "\n".join(lines) if lines else None
+
+
+def duration_of(body: dict) -> int:
+    """Call length in seconds, from the timestamps the provider returns."""
+    started, ended = body.get("startedAt"), body.get("endedAt")
+    if not started or not ended:
+        return 0
+    try:
+        from datetime import datetime
+        begin = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(str(ended).replace("Z", "+00:00"))
+        return max(0, int((finish - begin).total_seconds()))
+    except (ValueError, TypeError):
+        return 0
+
+
 async def wait_for_mock_call() -> None:
     """A beat, so the dashboard visibly shows the call in progress before it resolves."""
     await asyncio.sleep(settings.voice_mock_seconds)
 
 
-__all__ = ["Answer", "VoiceCallStarted", "place_call", "simulate_call", "wait_for_mock_call",
-           "build_assistant"]
+__all__ = ["Answer", "VoiceCallStarted", "answers_from_structured", "build_assistant",
+           "duration_of", "place_call", "poll_call", "response_gaps", "simulate_call",
+           "transcript_of", "wait_for_mock_call"]

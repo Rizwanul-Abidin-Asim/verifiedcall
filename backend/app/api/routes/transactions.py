@@ -22,7 +22,7 @@ from app.db.models import DecisionOutcome
 from app.db.session import get_session
 from app.services.audit import record_decision, record_transaction
 from app.services.events import broker
-from app.voice.service import run_mock_intervention, start_intervention
+from app.voice.service import run_live_intervention, run_mock_intervention, start_intervention
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
@@ -120,9 +120,12 @@ async def evaluate_transaction(
         try:
             call = await start_intervention(session, txn)
             await session.commit()
+            # Fire and forget either way. The checkout polls /voice/{id} or watches
+            # the stream; neither path can change the decision already recorded.
             if call.is_mock and settings.voice_mock:
-                # Fire and forget. The checkout polls /voice/{id} or watches the stream.
                 asyncio.create_task(run_mock_intervention(txn.id))
+            elif call.vapi_call_id:
+                asyncio.create_task(run_live_intervention(txn.id, call.vapi_call_id))
         except Exception as exc:  # noqa: BLE001 - the decision stands even if dialling fails
             log.error("api.intervention_failed txn=%s %r", txn.id, exc)
 

@@ -101,10 +101,27 @@ DATABASE_URL="sqlite+aiosqlite:///./demo.db" uv run uvicorn app.main:app --port 
 
 `VOICE_MOCK=true` is the default, so everything runs end to end with no Vapi account.
 
+### Placing a real call
+
+Set `VOICE_MOCK=false` with both Vapi variables filled in, restart, and then:
+
+```bash
+uv run python scripts/live_call_test.py +971501234567     # a phone you control
+```
+
+That dials an actual phone and spends Vapi credits, which is why it is a separate script
+rather than a flag. It drives demo scenario 3: the network signals still come from the
+sandbox number, only the call goes to your phone.
+
+No public URL or tunnel is needed. Vapi can report a call two ways and we use the one
+that works from a laptop, polling `GET /call/{id}` until the call ends rather than
+waiting for a webhook to arrive. The webhook route still works for a deployed instance,
+and whichever report lands first is the one recorded. ADR-006 has the reasoning.
+
 ### Before a demo
 
 ```bash
-uv run pytest                                  # 136 tests, no API key or network needed
+uv run pytest                                  # 164 tests, no API key or network needed
 uv run python scripts/smoke_test.py            # end to end against a running server
 ```
 
@@ -166,7 +183,10 @@ The audit trail, the API and the console are real.
   mode. The API, auth, latency and error handling are real; the underlying network is not.
 - **The bank.** The checkout is ours. It sends exactly the webhook a real gateway would.
 - **Holding the money.** No money moves. The hold is a state in our database.
-- **The phone call.** `VOICE_MOCK=true` scripts the customer's answers. Nothing dials.
+- **The phone call.** `VOICE_MOCK=true` scripts the customer's answers and nothing
+  dials. Real calls work and are what `scripts/live_call_test.py` places, but the mode
+  is recorded per call and the dashboard labels a simulated one rather than letting it
+  pass for real.
 - **The demo seam.** Sandbox numbers are not real phones and a real phone has no sandbox
   signals, so in a demo the number we look signals up against differs from the number we
   would call. The dashboard says so on every affected transaction rather than implying

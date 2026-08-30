@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Transaction, VoiceCall
 from app.db.session import get_session
-from app.voice.classify import Answer, Reply, assess, interpret
+from app.voice.classify import Answer, Reply, assess
 from app.voice.scripts import normalise_language
+from app.voice.vapi_client import answers_from_structured, response_gaps
 
 log = logging.getLogger("voice.webhook")
 router = APIRouter(tags=["voice"])
@@ -36,28 +37,20 @@ def _dig(payload: dict, *path: str, default: Any = None) -> Any:
 def parse_answers(payload: dict, language) -> list[Answer]:
     """Pull per-question answers out of an end-of-call report.
 
-    We publish our own structure through the assistant's tool calls, so the happy path is
-    a list under analysis.structuredData.answers. Anything else yields nothing, and the
-    caller treats that as inconclusive rather than as a clean call.
+    The assistant's analysis plan produces a flat object keyed by question, so that is
+    the happy path. The older list under structuredData.answers is still accepted, since
+    a payload in flight during a deploy should not be dropped. Anything else yields
+    nothing, and the caller treats that as inconclusive rather than as a clean call.
     """
-    raw = _dig(payload, "message", "analysis", "structuredData", "answers", default=None)
-    if raw is None:
-        raw = _dig(payload, "analysis", "structuredData", "answers", default=None)
-    if not isinstance(raw, list):
-        return []
+    data = _dig(payload, "message", "analysis", "structuredData", default=None)
+    if data is None:
+        data = _dig(payload, "analysis", "structuredData", default=None)
+    if isinstance(data, dict) and isinstance(data.get("answers"), list):
+        data = data["answers"]
 
-    answers: list[Answer] = []
-    for item in raw:
-        if not isinstance(item, dict) or not item.get("question_key"):
-            continue
-        answers.append(interpret(
-            question_key=str(item["question_key"]),
-            language=language,
-            heard=item.get("heard") or item.get("transcript"),
-            keypad=str(item["keypad"]) if item.get("keypad") is not None else None,
-            response_ms=int(item.get("response_ms") or 0),
-        ))
-    return answers
+    messages = (_dig(payload, "message", "messages", default=None)
+                or _dig(payload, "messages", default=None) or [])
+    return answers_from_structured(data, language, response_gaps(messages))
 
 
 @router.post("/voice/webhook")
