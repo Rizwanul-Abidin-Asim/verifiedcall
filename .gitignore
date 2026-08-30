@@ -33,5 +33,7 @@ Thumbs.db
 
 # --- local data ---
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 pgdata/

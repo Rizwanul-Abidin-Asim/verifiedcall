@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import decisions, stream, transactions
+from app.api.routes import decisions, metrics, stream, transactions
 from app.camara.base import close_client, get_client
 from app.config import settings
 from app.db.session import dispose_engine
@@ -92,6 +92,7 @@ app.include_router(transactions.router)
 app.include_router(decisions.router)
 app.include_router(stream.router)
 app.include_router(voice_webhooks.router)
+app.include_router(metrics.router)
 
 
 @app.get("/health", tags=["ops"])

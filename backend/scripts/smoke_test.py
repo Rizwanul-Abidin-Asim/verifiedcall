@@ -154,6 +154,17 @@ async def main(url: str) -> int:
         missing = await c.get(f"{url}/decisions/00000000-0000-0000-0000-000000000000")
         check(missing.status_code == 404, "unknown decision id returns 404, not 500")
 
+        print("\nimpact metrics")
+        mr = await c.get(f"{url}/metrics")
+        if check(mr.status_code == 200, "GET /metrics returns 200"):
+            m = mr.json()
+            approve_median = m["added_latency_ms"]["approve_path_median"]
+            check(m["camara"]["apis_integrated"] == 4, "reports 4 CAMARA APIs")
+            check(m["voice"]["languages_supported"] == 4, "reports 4 voice languages")
+            check(approve_median is not None, "has an approve-path median to quote",
+                  f"{approve_median}ms median, "
+                  f"{m['camara']['served_from_cache_pct']}% of calls from cache")
+
         print("\nvoice intervention")
         held_txn = None
         for did in decision_ids:

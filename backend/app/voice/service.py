@@ -129,4 +129,18 @@ async def run_mock_intervention(transaction_id: uuid.UUID) -> None:
             await resolve_call(session, transaction_id, assessment, duration)
             await session.commit()
     except Exception as exc:  # noqa: BLE001
+        # The payment stays held, which is the safe state, but an operator needs to see
+        # that the call never completed rather than watching a spinner forever.
         log.error("voice.mock_failed txn=%s %r", transaction_id, exc)
+        try:
+            async with get_sessionmaker()() as session:
+                call = (await session.execute(
+                    select(VoiceCall).where(VoiceCall.transaction_id == transaction_id)
+                )).scalar_one_or_none()
+                if call is not None and call.status is not VoiceStatus.COMPLETED:
+                    call.status = VoiceStatus.FAILED
+                    call.transcript = f"The call did not complete: {exc}"
+                    await session.commit()
+                    log.info("voice.marked_failed txn=%s", transaction_id)
+        except Exception as inner:  # noqa: BLE001
+            log.error("voice.could_not_mark_failed txn=%s %r", transaction_id, inner)
