@@ -209,7 +209,9 @@ def test_simulator_works_in_every_language(lang):
 def test_real_assistant_definition_carries_the_script():
     a = build_assistant(script_for("ar"), "42,000.00", "AED", "Direct transfer")
     assert "42,000.00" in a["firstMessage"]
-    assert a["transcriber"]["language"] == "ar-AE"
+    # Bare "ar", not "ar-AE". The transcriber only accepts regional variants for
+    # English; see the note on SPEECH_LOCALE and the schema test in test_voice_live.py.
+    assert a["transcriber"]["language"] == "ar"
     system = a["model"]["messages"][0]["content"]
     for q in script_for("ar").questions:
         assert q.text in system

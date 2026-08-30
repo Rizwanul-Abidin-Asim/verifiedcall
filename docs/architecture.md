@@ -18,8 +18,11 @@ Diagram: https://claude.ai/code/artifact/75e75507-b818-4bb8-8134-4295be7f6802
 5. **Scoring engine → Outcome.** Observed facts become a 0–100 score, an outcome and a
    numbered reasoning trace, deterministically, with the policy guard rails applied.
 6. **Voice layer → Decision log → Console.** A held payment triggers an outbound call in
-   the customer's language; the outcome resolves the transaction, and every signal,
-   decision and transcript streams to the fraud-ops console over SSE.
+   the customer's language. A background task polls the telephony provider until the call
+   ends, reads the answers and the pause before each one, and resolves the transaction.
+   Every signal, decision and transcript streams to the fraud-ops console over SSE.
+   Polling rather than a webhook means no public URL is needed to run this; the webhook
+   route still works for a deployed instance and the second report of a call is ignored.
 
 ## Architecture components
 
@@ -62,5 +65,7 @@ stops at the score.
 | All CAMARA APIs | Same, and the decision still completes |
 | The reasoning model | Deterministic path pulls every signal and scores it; the mode is shown on the dashboard |
 | The voice call | Payment stays held and the call is recorded as failed; silence never releases money |
+| The call never ending | Polling gives up after three minutes and marks the call failed, so a stuck call shows as stuck rather than as a spinner |
+| The transcript not aligning | Hesitation timing is dropped rather than guessed, so a pause is never attributed to the wrong question |
 | The database | The API returns a clear JSON error through the CORS layer, never a stack trace |
 | The dashboard | Bounded event queues drop rather than block; a dead console cannot slow a payment |

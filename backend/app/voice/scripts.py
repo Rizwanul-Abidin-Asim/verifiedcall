@@ -37,13 +37,24 @@ LANGUAGE_NAMES = {
     Language.UR: "Urdu",
 }
 
-# Vapi voice/transcriber locales, so the client does not have to map these itself.
+# Transcriber locales, so the client does not have to map these itself.
+#
+# These are Deepgram codes and the accepted set is narrower than it looks: only en
+# carries regional variants. ar-AE, hi-IN and ur-PK are rejected, which is worth
+# knowing because the rejection lands when the call is placed, not when it is written.
+# Checked against the provider's published schema.
 SPEECH_LOCALE = {
     Language.EN: "en-US",
-    Language.AR: "ar-AE",
-    Language.HI: "hi-IN",
-    Language.UR: "ur-PK",
+    Language.AR: "ar",
+    Language.HI: "hi",
+    Language.UR: "ur",
 }
+
+# Deepgram's non-English coverage is uneven, and Arabic in particular is weaker than
+# its English. That is the reason the script offers a keypad answer in every language
+# and the reason a keypad press outranks the transcript in classify.py: the decision
+# should not rest on a transcriber being good at Gulf Arabic.
+
 
 
 class Question(BaseModel):

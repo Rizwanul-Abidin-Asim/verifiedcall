@@ -109,3 +109,44 @@ Rejected: short-circuiting the LLM for obviously clean payments. It would save t
 tokens on the most common case, but deciding without consulting the agent is exactly the
 rules-engine behaviour the project argues against, and we would rather pay the tokens
 than quietly become the thing we criticise.
+
+## ADR-006 — We poll for the call result instead of waiting for a webhook
+
+Vapi reports how a call went by POSTing an end-of-call report to a URL we give it. That
+works for a deployed service and does not work on a laptop, where the fix is to run a
+tunnel and paste a changing public URL into the provider before every demo. One more
+moving part, on the machine that has to work on stage.
+
+Vapi also exposes `GET /call/{id}` with a status that reaches `ended`, carrying the same
+analysis, transcript and timings the webhook would have delivered. So a held payment now
+starts a background task that polls that endpoint until the call finishes, and resolves
+the transaction from the result.
+
+The webhook route is still there and still works, because a deployed instance should use
+it. Both paths call `resolve_call`, which ignores a report for a call that is already
+resolved: whichever arrives first is the record. Without that guard a late webhook could
+overwrite an outcome an analyst had already acted on, and in the worst ordering could
+turn a blocked payment into a released one.
+
+What this costs: a poll every three seconds for up to three minutes, and a resolution
+that lands up to three seconds later than a webhook would have. What it buys: no tunnel,
+no public URL, and one less thing to configure in the ten minutes before a pitch.
+
+## ADR-007 — The provider extracts the answers; we measure the timing ourselves
+
+The assistant carries an analysis plan asking Vapi to return, per question, whether the
+customer said yes, no, or neither. That is a reasonable job for a language model reading
+a transcript, and it means we are not writing yes/no vocabularies for four languages
+against real speech.
+
+Hesitation is different. How long someone paused before denying that anyone told them to
+pay is the signal that separates scenario 3 from a clean call, and a model asked to
+estimate a pause will produce a plausible number rather than a measured one. So the pause
+is computed from the message timestamps in the transcript: the gap between the assistant
+finishing a question and the customer starting to answer.
+
+That computation can fail. If the message list has fewer gaps than there are questions,
+we cannot say which pause belonged to which question, and we record no timing at all
+rather than an alignment we are guessing at. Hesitation then simply does not fire. A
+missing signal costs us a detection; a wrongly attributed one costs a real customer their
+payment, and those are not equally bad.

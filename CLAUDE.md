@@ -78,7 +78,7 @@ verified-call/
 │   │   │   └── schemas.py           # RiskDecision, SignalResult, ReasoningStep
 │   │   │
 │   │   ├── voice/
-│   │   │   ├── vapi_client.py       # place call, plus the mock-mode simulator
+│   │   │   ├── vapi_client.py       # place call, poll the result, mock-mode simulator
 │   │   │   ├── scripts.py           # interrogation script in EN, AR, HI, UR
 │   │   │   ├── classify.py          # answers + hesitation timing -> outcome
 │   │   │   ├── service.py           # orchestrates an intervention
@@ -158,8 +158,13 @@ Backend and frontend both complete and verified end to end.
 | Metrics, DEMO_MODE, smoke test | done |
 | README, architecture, demo script | done |
 
-136 tests pass with no API key and no network. `scripts/smoke_test.py` checks everything
-end to end against a running server.
+164 tests pass with no API key and no network. `scripts/smoke_test.py` checks everything
+end to end against a running server, and `scripts/live_call_test.py` places one real call
+to a phone you control.
+
+Real calls are wired: credentials verified, the assistant validated against the
+provider's schema, and the result read by polling rather than by webhook, so no tunnel
+is needed. See ADR-006 and ADR-007.
 
 Outstanding, needs a human: the Arabic, Hindi and Urdu voice scripts have not been
-reviewed by native speakers, and a Vapi account is needed before any real call is placed.
+reviewed by native speakers.
