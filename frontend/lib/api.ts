@@ -106,9 +106,33 @@ export const getVoice = (transactionId: string) =>
     language: string;
     is_mock: boolean;
     duration_s: number | null;
+    channel: "phone" | "web";
     answers: Record<string, { reply: string; response_ms: number; hesitant: boolean }>;
     transcript: string | null;
   }>(`/voice/${transactionId}`);
+
+/** The assistant is built on the server, so the browser plays a script it did not write.
+ *  The key returned here is the publishable one; the private key never leaves the API. */
+export const getWebSession = (transactionId: string) =>
+  get<{
+    transaction_id: string;
+    public_key: string;
+    assistant: Record<string, unknown>;
+  }>(`/voice/${transactionId}/web-session`);
+
+/** Hand the call id back so the server can resolve it the same way it resolves a phone
+ *  call: same polling, same extraction, same hesitation timing. */
+export async function reportWebCallStarted(transactionId: string, callId: string) {
+  const response = await fetch(`${API_BASE}/voice/${transactionId}/web-started`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ call_id: callId }),
+  });
+  if (!response.ok) {
+    throw new ApiError(`Could not register the call (${response.status})`);
+  }
+  return response.json() as Promise<{ accepted: boolean; reason?: string }>;
+}
 
 export async function evaluatePayment(body: Record<string, unknown>) {
   let response: Response;

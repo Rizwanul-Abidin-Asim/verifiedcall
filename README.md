@@ -113,18 +113,30 @@ That dials an actual phone and spends Vapi credits, which is why it is a separat
 rather than a flag. It drives demo scenario 3: the network signals still come from the
 sandbox number, only the call goes to your phone.
 
-**A free Vapi number cannot call internationally.** We hit this with a US trial number
-dialling a UAE phone, and the API is explicit about it:
+**A UAE mobile cannot be reached by any AI voice platform.** Etisalat and du are
+required to block VoIP-originated termination, and every one of these platforms is
+VoIP-originated. We established that by testing each layer separately rather than
+guessing: `docs/telephony-findings.md` has the call records, including two attempts that
+rang for exactly 55 seconds, were never billed, and never appeared in the recipient's
+call log.
 
-```
-400 Couldn't start call. Free Vapi numbers do not support international calls.
+The phone path is complete and works where carriers permit it. For the UAE, use the
+browser channel below.
+
+### The browser channel
+
+```bash
+VOICE_CHANNEL=web        # with VOICE_MOCK=false and VAPI_PUBLIC_KEY set
 ```
 
-So a real call needs either a paid Vapi plan or a number in the country you are dialling.
-The code path is complete and was exercised against the live API; what stops it is a
-plan limit, not the integration. When it happens the payment stays held, the call is
-recorded as failed with the provider's reason, and the dashboard shows it as a real
-attempt rather than hiding it.
+The held payment then offers the customer the same conversation through the checkout
+page. Same script, same voice, same transcription, same answer extraction, same
+hesitation timing, same resolution, no carrier in the path. The assistant is still built
+on the server, so the interrogation script stays in version control; the page plays a
+definition rather than composing one.
+
+The channel is recorded per call and shown on the dashboard, because a browser call is
+not a phone call and we would rather say so.
 
 No public URL or tunnel is needed. Vapi can report a call two ways and we use the one
 that works from a laptop, polling `GET /call/{id}` until the call ends rather than
@@ -134,7 +146,7 @@ and whichever report lands first is the one recorded. ADR-006 has the reasoning.
 ### Before a demo
 
 ```bash
-uv run pytest                                  # 164 tests, no API key or network needed
+uv run pytest                                  # 171 tests, no API key or network needed
 uv run python scripts/smoke_test.py            # end to end against a running server
 ```
 
@@ -211,11 +223,13 @@ The audit trail, the API and the console are real.
   consent token only the handset can obtain over mobile data. We replaced it with Call
   Forwarding Signal, which suits this problem better. `scripts/spikes/probe_number_verification.py`
   is kept as evidence.
-- **A free Vapi number cannot dial internationally**, so the live call was verified up to
-  the provider's own plan limit rather than through to a ringing UAE handset. Everything
-  either side of that boundary is exercised: the assistant is validated against Vapi's
-  schema, the call is placed against the live API, and the rejection is handled the way
-  any call failure is, by leaving the payment held.
+- **UAE mobiles are unreachable by internet telephony**, so the demo intervention runs
+  in the browser rather than over the phone network. This is a regulatory boundary, not
+  an integration gap: the assistant validates against the provider's schema, the call
+  reaches the live API, and Twilio bills a rate for the destination. The terminating
+  carrier is what stops it. Both channels share every line of code after the call
+  starts. `docs/telephony-findings.md` records how we established it, including a bug
+  in our own test that had reported a blocked call as a success.
 - **Location Verification ignores the area we send.** The sandbox returns the same verdict
   for Dubai, Bonn or Tokyo. Our client sends a real `CIRCLE` area and would work against a
   live network, but no geofence is being computed in the demo.

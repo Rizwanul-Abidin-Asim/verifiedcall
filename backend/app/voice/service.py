@@ -12,11 +12,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Transaction, VoiceCall, VoiceOutcome, VoiceStatus
+from app.config import settings
+from app.db.models import Transaction, VoiceCall, VoiceChannel, VoiceOutcome, VoiceStatus
 from app.db.session import get_sessionmaker
 from app.services.events import broker
 from app.voice.classify import RELEASES_PAYMENT, Assessment, assess
-from app.voice.scripts import normalise_language
+from app.voice.scripts import normalise_language, script_for
 from app.voice.vapi_client import (
     answers_from_structured,
     duration_of,
@@ -50,6 +51,7 @@ async def _publish(txn: Transaction, call: VoiceCall, rationale: str | None = No
         "resolution": resolution_for(call.outcome),
         "language": call.language,
         "is_mock": call.is_mock,
+        "channel": call.channel.value,
         "duration_s": call.duration_s,
         "rationale": rationale,
     })
@@ -67,6 +69,20 @@ async def start_intervention(session: AsyncSession, txn: Transaction) -> VoiceCa
     call = VoiceCall(transaction_id=txn.id, status=VoiceStatus.PENDING)
     session.add(call)
     await session.flush()
+
+    # The browser channel exists because a UAE mobile cannot be reached by any AI voice
+    # platform: Etisalat and du block VoIP-originated termination, which we confirmed
+    # from call records rather than assumed. Nothing is dialled here. The checkout page
+    # offers the customer the same conversation over the browser, and tells us the call
+    # id when it starts so the rest of the pipeline runs unchanged.
+    if settings.voice_channel == "web" and not settings.voice_mock:
+        call.channel = VoiceChannel.WEB
+        call.language = script_for(txn.customer_locale).language.value
+        call.status = VoiceStatus.RINGING
+        await session.flush()
+        log.info("voice.web_offered txn=%s lang=%s", txn.id, call.language)
+        await _publish(txn, call, "Waiting for the customer to take the call.")
+        return call
 
     try:
         started = await place_call(

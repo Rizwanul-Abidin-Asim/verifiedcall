@@ -10,8 +10,13 @@ A real call to a UAE handset has to clear three gates, and only the last one is 
 
 Testing them together means a failure tells you nothing about which gate closed. So
 this script skips the AI layer entirely and places a plain Twilio call that speaks one
-sentence. If the phone rings, gates 1 and 2 are open and anything that fails afterwards
-belongs to the voice platform, not the carrier.
+sentence.
+
+One caveat, learned the hard way. A "no-answer" result does NOT prove the handset rang.
+Twilio reports it whenever it saw ringback and timed out, and a carrier that blocks a
+call can return ringback for a call it never delivers. From the API the two look
+identical. So no-answer is reported here as inconclusive, and the recipient's call log
+is the only place the difference is visible.
 
 It costs about a cent. Twilio publishes a rate of roughly $0.30/min to UAE mobiles and
 this call lasts a few seconds.
@@ -47,6 +52,20 @@ KNOWN = {
 
 GREEN, RED, YELLOW, DIM, RESET = (
     "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m")
+
+
+def duration_hint(state: dict) -> str:
+    """How long Twilio held the call. A repeated identical figure is a carrier timeout."""
+    start, end = state.get("start_time"), state.get("end_time")
+    if not (start and end):
+        return "an unknown time"
+    try:
+        from email.utils import parsedate_to_datetime
+        seconds = int((parsedate_to_datetime(end) - parsedate_to_datetime(start))
+                      .total_seconds())
+        return f"{seconds}s of ringing"
+    except (ValueError, TypeError):
+        return "an unknown time"
 
 
 def fail(message: str) -> int:
@@ -121,13 +140,27 @@ async def main(to_number: str, timeout_s: int) -> int:
             return 0
 
     print()
-    if last in ("completed", "no-answer", "busy"):
-        print(f"{GREEN}Twilio can reach this number.{RESET} Final status: {last}.")
-        if last == "no-answer":
-            print(f"{DIM}Nobody picked up, which still proves the call was placed and "
-                  f"the network connected it.{RESET}")
+    if last in ("completed", "busy"):
+        print(f"{GREEN}Twilio reached this number.{RESET} Final status: {last}.")
         print("\nGates 1 and 2 are open. Next: import the number into Vapi and run "
               "scripts/live_call_test.py.")
+        return 0
+
+    if last == "no-answer":
+        # This was originally reported as success. It is not, and the difference cost
+        # an afternoon. Twilio reports no-answer when it saw ringback and timed out,
+        # and a carrier that blocks a call can return ringback for a call it never
+        # delivers. From the API the two are indistinguishable. Only the recipient's
+        # call log separates them, so this asks rather than concludes.
+        print(f"{YELLOW}Inconclusive.{RESET} Twilio reported no-answer after "
+              f"{duration_hint(state)}.")
+        print("\nTwilio saw ringing and timed out. That does NOT prove the handset "
+              "rang. Either:")
+        print("  - nobody picked up, or")
+        print("  - the terminating carrier returned ringback and dropped the call.")
+        print(f"\n{YELLOW}Check the recipient's call log.{RESET} A missed call means "
+              f"the network delivered it. Nothing there means it did not, whatever "
+              f"Twilio believed.")
         return 0
 
     reason = state.get("annotation") or ""

@@ -9,11 +9,14 @@ The shapes used here come from Vapi's published OpenAPI spec, not from guesswork
 """
 
 import uuid
+from contextlib import asynccontextmanager
 from decimal import Decimal
 
 import httpx
 import pytest
 import respx
+from asgi_lifespan import LifespanManager
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -22,6 +25,7 @@ from app.db.models import (
     Base,
     Transaction,
     VoiceCall,
+    VoiceChannel,
     VoiceOutcome,
     VoiceStatus,
 )
@@ -334,3 +338,152 @@ async def test_the_extraction_schema_asks_for_exactly_our_questions(language):
     extracted = dict.fromkeys(keys, "no")
     assert [a.question_key for a in
             answers_from_structured(extracted, language, [])] == keys
+
+
+# ------------------------------------------------- the browser channel
+
+# A UAE mobile cannot be reached by any AI voice platform, because Etisalat and du are
+# required to block VoIP-originated termination. The browser channel carries the same
+# conversation with no carrier in the path. These tests cover the seam between the two,
+# since everything after the call starts is the shared code above.
+
+async def held_call(session, *, channel: VoiceChannel) -> Transaction:
+    txn = Transaction(
+        customer_msisdn="+971504229551", signal_msisdn="+99999991004",
+        customer_locale="en", amount=Decimal("42000.00"), currency="AED",
+        merchant_name="Direct transfer", beneficiary_id=f"p-{uuid.uuid4().hex[:8]}",
+        is_new_beneficiary=True,
+    )
+    session.add(txn)
+    await session.flush()
+    session.add(VoiceCall(transaction_id=txn.id, status=VoiceStatus.RINGING,
+                          channel=channel, language="en"))
+    await session.flush()
+    return txn
+
+
+@asynccontextmanager
+async def web_client(session):
+    """The app, wired to this test's session."""
+    from app.db.session import get_session
+    from app.main import app
+
+    async def override():
+        yield session
+
+    app.dependency_overrides[get_session] = override
+    try:
+        async with LifespanManager(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport,
+                                         base_url="http://test") as client:
+                yield client
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_web_session_hands_the_browser_a_script_it_did_not_write(
+        session, monkeypatch):
+    """The assistant is built on the server so the script stays in version control."""
+    monkeypatch.setattr(settings, "vapi_public_key", "pk-test")
+    txn = await held_call(session, channel=VoiceChannel.WEB)
+    async with web_client(session) as client:
+        r = await client.get(f"/voice/{txn.id}/web-session")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["public_key"] == "pk-test"
+
+        assistant = body["assistant"]
+        schema = assistant["analysisPlan"]["structuredDataPlan"]["schema"]
+        assert list(schema["properties"]) == [
+            "others_present", "asked_to_pay", "told_to_keep_secret"]
+        assert "42,000.00" in assistant["firstMessage"]
+
+
+async def test_web_session_never_leaks_the_private_key(session, monkeypatch):
+    """The publishable key goes to the page. The private key must not."""
+    monkeypatch.setattr(settings, "vapi_public_key", "pk-test")
+    monkeypatch.setattr(settings, "vapi_api_key", "SECRET-PRIVATE-KEY")
+    txn = await held_call(session, channel=VoiceChannel.WEB)
+    async with web_client(session) as client:
+        r = await client.get(f"/voice/{txn.id}/web-session")
+        assert "SECRET-PRIVATE-KEY" not in r.text
+
+
+async def test_a_phone_call_is_not_offered_to_the_browser(session, monkeypatch):
+    monkeypatch.setattr(settings, "vapi_public_key", "pk-test")
+    txn = await held_call(session, channel=VoiceChannel.PHONE)
+    async with web_client(session) as client:
+        r = await client.get(f"/voice/{txn.id}/web-session")
+        assert r.status_code == 409
+
+
+async def test_web_session_refuses_without_a_public_key(session, monkeypatch):
+    """Better a clear 503 than a page that fails silently in front of judges."""
+    monkeypatch.setattr(settings, "vapi_public_key", "")
+    txn = await held_call(session, channel=VoiceChannel.WEB)
+    async with web_client(session) as client:
+        r = await client.get(f"/voice/{txn.id}/web-session")
+        assert r.status_code == 503
+
+
+async def test_web_started_records_the_call_and_needs_an_id(session):
+    txn = await held_call(session, channel=VoiceChannel.WEB)
+    async with web_client(session) as client:
+        blank = await client.post(f"/voice/{txn.id}/web-started", json={})
+        assert blank.status_code == 422
+
+        r = await client.post(f"/voice/{txn.id}/web-started",
+                              json={"call_id": "web-call-abc"})
+        assert r.status_code == 200
+        assert r.json()["accepted"] is True
+
+    call = (await session.execute(
+        select(VoiceCall).where(VoiceCall.transaction_id == txn.id))).scalar_one()
+    assert call.vapi_call_id == "web-call-abc"
+    assert call.status is VoiceStatus.IN_PROGRESS
+
+
+async def test_a_resolved_call_cannot_be_restarted_from_the_browser(session):
+    """A stale tab must not reopen a decision someone may already have acted on."""
+    txn = await held_call(session, channel=VoiceChannel.WEB)
+    call = (await session.execute(
+        select(VoiceCall).where(VoiceCall.transaction_id == txn.id))).scalar_one()
+    call.status = VoiceStatus.COMPLETED
+    call.outcome = VoiceOutcome.SCAM_DETECTED
+    await session.flush()
+
+    async with web_client(session) as client:
+        r = await client.post(f"/voice/{txn.id}/web-started", json={"call_id": "late"})
+        assert r.json()["accepted"] is False
+
+    again = (await session.execute(
+        select(VoiceCall).where(VoiceCall.transaction_id == txn.id))).scalar_one()
+    assert again.outcome is VoiceOutcome.SCAM_DETECTED
+
+
+async def test_the_web_channel_does_not_dial(session, monkeypatch):
+    """In web mode nothing may reach the telephony API. That is the whole point."""
+    from app.voice import service as voice_service
+
+    monkeypatch.setattr(settings, "voice_channel", "web")
+    monkeypatch.setattr(settings, "voice_mock", False)
+
+    async def explode(**kwargs):
+        raise AssertionError("start_intervention dialled a phone in web mode")
+
+    monkeypatch.setattr(voice_service, "place_call", explode)
+
+    txn = Transaction(
+        customer_msisdn="+971504229551", signal_msisdn="+99999991004",
+        customer_locale="ar", amount=Decimal("42000.00"), currency="AED",
+        merchant_name="Direct transfer", beneficiary_id=f"p-{uuid.uuid4().hex[:8]}",
+        is_new_beneficiary=True,
+    )
+    session.add(txn)
+    await session.flush()
+
+    call = await voice_service.start_intervention(session, txn)
+    assert call.channel is VoiceChannel.WEB
+    assert call.status is VoiceStatus.RINGING
+    assert call.language == "ar"        # the locale still chooses the script

@@ -158,13 +158,18 @@ Backend and frontend both complete and verified end to end.
 | Metrics, DEMO_MODE, smoke test | done |
 | README, architecture, demo script | done |
 
-164 tests pass with no API key and no network. `scripts/smoke_test.py` checks everything
+171 tests pass with no API key and no network. `scripts/smoke_test.py` checks everything
 end to end against a running server, and `scripts/live_call_test.py` places one real call
 to a phone you control.
 
 Real calls are wired: credentials verified, the assistant validated against the
 provider's schema, and the result read by polling rather than by webhook, so no tunnel
 is needed. See ADR-006 and ADR-007.
+
+A UAE mobile cannot be reached by any AI voice platform, because Etisalat and du block
+VoIP-originated termination. Verified from call records, not assumed; see
+`docs/telephony-findings.md`. `VOICE_CHANNEL=web` carries the same conversation over the
+browser, sharing every line of code after the call starts. See ADR-008 and ADR-009.
 
 Outstanding, needs a human: the Arabic, Hindi and Urdu voice scripts have not been
 reviewed by native speakers.

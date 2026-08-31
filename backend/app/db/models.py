@@ -73,6 +73,20 @@ class VoiceStatus(StrEnum):
     FAILED = "failed"
 
 
+class VoiceChannel(StrEnum):
+    """How the customer was reached.
+
+    A UAE mobile cannot be reached by any AI voice platform: Etisalat and du are
+    required to block VoIP-originated termination, which we verified with call records
+    rather than assumed. WEB carries the same conversation over the browser instead,
+    with no carrier in the path. The distinction is recorded because a web call is not
+    a phone call and the dashboard should not imply it was.
+    """
+
+    PHONE = "phone"
+    WEB = "web"
+
+
 class VoiceOutcome(StrEnum):
     CONFIRMED_LEGITIMATE = "confirmed_legitimate"
     SCAM_DETECTED = "scam_detected"
@@ -182,6 +196,8 @@ class VoiceCall(Base):
 
     duration_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
+    channel: Mapped[VoiceChannel] = mapped_column(
+        enum_column(VoiceChannel, 8), default=VoiceChannel.PHONE)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     transaction: Mapped[Transaction] = relationship(back_populates="voice_call")
