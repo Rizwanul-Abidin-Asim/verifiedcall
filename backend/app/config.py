@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     vapi_phone_number_id: str = ""
     elevenlabs_api_key: str = ""
 
+    # Our own Twilio number, imported into the voice platform. Needed because no voice
+    # platform's bundled number reaches the UAE: Vapi's free numbers are US national
+    # only, Retell's managed numbers cover sixteen countries that do not include the
+    # Emirates, and ElevenLabs does not issue numbers at all. Twilio publishes a rate
+    # for UAE mobiles, so the carrier is the layer that can actually place the call.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone_number: str = ""
+
     # --- Infra ---
     database_url: str = "postgresql+asyncpg://verifiedcall:verifiedcall@localhost:55432/verifiedcall"
     redis_url: str = "redis://localhost:56379/0"
