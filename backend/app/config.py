@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # --- Voice ---
     vapi_api_key: str = ""
     vapi_phone_number_id: str = ""
+    # The browser SDK authenticates with a separate, publishable key. It is meant to be
+    # visible in page source; the private key above must never be.
+    vapi_public_key: str = ""
+    # "phone" dials out; "web" hands the same conversation to the browser. Web exists
+    # because UAE carriers block VoIP termination, so no platform can ring a UAE mobile.
+    voice_channel: str = "phone"
     elevenlabs_api_key: str = ""
 
     # Our own Twilio number, imported into the voice platform. Needed because no voice

@@ -13,10 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Transaction, VoiceCall
+from app.db.models import Transaction, VoiceCall, VoiceChannel, VoiceStatus
 from app.db.session import get_session
 from app.voice.classify import Answer, Reply, assess
-from app.voice.scripts import normalise_language
+from app.voice.scripts import normalise_language, script_for
 from app.voice.vapi_client import answers_from_structured, response_gaps
 
 log = logging.getLogger("voice.webhook")
@@ -122,6 +122,7 @@ async def voice_status(transaction_id: uuid.UUID, session: SessionDep) -> dict:
         "resolution": resolution_for(call.outcome),
         "language": call.language,
         "is_mock": call.is_mock,
+        "channel": call.channel.value,
         "duration_s": call.duration_s,
         "answers": call.answers,
         "transcript": call.transcript,
@@ -129,3 +130,77 @@ async def voice_status(transaction_id: uuid.UUID, session: SessionDep) -> dict:
 
 
 __all__ = ["router", "parse_answers", "Reply"]
+
+
+@router.get("/voice/{transaction_id}/web-session")
+async def web_session(transaction_id: uuid.UUID, session: SessionDep) -> dict:
+    """Everything the browser needs to run the call itself.
+
+    The assistant is built here, not in the browser and not in Vapi's dashboard, so the
+    interrogation script stays in version control next to the tests that exercise it.
+    The page is handed a definition to play, not a script to compose.
+
+    The key returned is the publishable one. It is designed to appear in page source;
+    the private key never leaves this process.
+    """
+    from app.config import settings
+    from app.voice.vapi_client import build_assistant
+
+    call = (await session.execute(
+        select(VoiceCall).where(VoiceCall.transaction_id == transaction_id)
+    )).scalar_one_or_none()
+    if call is None:
+        raise HTTPException(status_code=404, detail="No voice call for that transaction")
+    if call.status is VoiceStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="That call has already been answered")
+    if call.channel is not VoiceChannel.WEB:
+        raise HTTPException(status_code=409,
+                            detail="That call is being placed over the phone network")
+    if not settings.vapi_public_key:
+        raise HTTPException(status_code=503, detail="VAPI_PUBLIC_KEY is not configured")
+
+    txn = (await session.execute(
+        select(Transaction).where(Transaction.id == transaction_id))).scalar_one()
+
+    return {
+        "transaction_id": str(transaction_id),
+        "public_key": settings.vapi_public_key,
+        "assistant": build_assistant(
+            script_for(txn.customer_locale),
+            amount=f"{txn.amount:,.2f}", currency=txn.currency,
+            beneficiary=txn.merchant_name,
+        ),
+    }
+
+
+@router.post("/voice/{transaction_id}/web-started")
+async def web_started(transaction_id: uuid.UUID, body: dict, session: SessionDep) -> dict:
+    """The browser reports the call it just started, and we take it from there.
+
+    From this point a web call is indistinguishable from a phone call: the same polling,
+    the same answer extraction, the same hesitation timing, the same resolution. Only
+    how the audio reached the customer differed.
+    """
+    import asyncio
+
+    from app.voice.service import run_live_intervention
+
+    call_id = str(body.get("call_id") or "").strip()
+    if not call_id:
+        raise HTTPException(status_code=422, detail="call_id is required")
+
+    call = (await session.execute(
+        select(VoiceCall).where(VoiceCall.transaction_id == transaction_id)
+    )).scalar_one_or_none()
+    if call is None:
+        raise HTTPException(status_code=404, detail="No voice call for that transaction")
+    if call.status is VoiceStatus.COMPLETED:
+        return {"accepted": False, "reason": "already resolved"}
+
+    call.vapi_call_id = call_id
+    call.status = VoiceStatus.IN_PROGRESS
+    await session.commit()
+
+    asyncio.create_task(run_live_intervention(transaction_id, call_id))
+    log.info("voice.web_started txn=%s call=%s", transaction_id, call_id)
+    return {"accepted": True, "transaction_id": str(transaction_id)}

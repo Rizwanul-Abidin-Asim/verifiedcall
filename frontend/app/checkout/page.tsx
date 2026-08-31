@@ -10,6 +10,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import { WebCall } from "@/components/WebCall";
 import {
   ApiError,
   evaluatePayment,
@@ -105,6 +107,7 @@ interface VoiceState {
   outcome: string | null;
   resolution: string;
   language: string;
+  channel?: "phone" | "web";
   answers: Record<string, { reply: string; response_ms: number; hesitant: boolean }>;
 }
 
@@ -261,7 +264,8 @@ export default function Checkout() {
               </>
             ) : phase === "calling" ? (
               <>
-                <span className="spinner" /> Calling you now…
+                <span className="spinner" />{" "}
+                {voice?.channel === "web" ? "Waiting for you…" : "Calling you now…"}
               </>
             ) : (
               `Pay ${money(scenario.amount, "AED")}`
@@ -278,6 +282,18 @@ export default function Checkout() {
             <p>{error}</p>
           </div>
         )}
+
+        {/* A held payment on the browser channel waits for the customer to pick up
+            here, because no phone will ring. Everything after that is shared. */}
+        {decision?.outcome === "intervene" &&
+          voice?.channel === "web" &&
+          voice.status !== "completed" &&
+          voice.status !== "failed" && (
+            <WebCall
+              transactionId={decision.transaction_id}
+              language={voice.language}
+            />
+          )}
 
         {decision && phase !== "error" && (
           <CustomerResult

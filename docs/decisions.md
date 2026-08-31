@@ -150,3 +150,51 @@ we cannot say which pause belonged to which question, and we record no timing at
 rather than an alignment we are guessing at. Hesitation then simply does not fire. A
 missing signal costs us a detection; a wrongly attributed one costs a real customer their
 payment, and those are not equally bad.
+
+## ADR-008 — The intervention can happen in the browser, and says so
+
+We could not place a real call to a UAE mobile, and it is not a bug we can fix.
+Etisalat and du are required to block VoIP-originated termination, and every AI voice
+platform is VoIP-originated. `docs/telephony-findings.md` has the call records: two
+attempts, 55 seconds of ringback each, never billed, never delivered, nothing in the
+recipient's log.
+
+So `VOICE_CHANNEL=web` carries the same conversation over the page instead. The server
+still builds the assistant, so the interrogation script stays in version control rather
+than moving into a dashboard or into the browser. The page receives a definition to
+play, reports the call id back, and from that point the code is the one already written
+for phone calls: the same polling, the same answer extraction, the same hesitation
+timing, the same resolution and the same guard against a second report.
+
+That reuse is the reason this was two hours rather than two days. Only the first step
+of the intervention was ever telephony-specific.
+
+The channel is a column, not a mode flag, because a web call is not a phone call and
+the dashboard should not imply one rang. Every existing row migrated to `phone`, which
+is what those calls were.
+
+What this costs: the customer has to be at the checkout to take the call, which a real
+deployment would not accept. In a real deployment the bank is the operator's customer
+and would reach the handset over the operator's own network, which is the thing this
+whole project argues for. The demo constraint and the product argument point the same
+way.
+
+## ADR-009 — Vapi stays, on evidence rather than inertia
+
+Once the phone path failed we re-examined the platform choice rather than defending it.
+
+ElevenLabs Agents looked like the natural alternative, since ElevenLabs already supplies
+our voice inside Vapi. Two findings settled it. It issues no phone numbers at all, so it
+requires the same Twilio import rather than avoiding it. And its transcript timing is
+`time_in_call_secs`, an integer, so a 3,500 ms hesitation threshold cannot be expressed
+at all. That threshold is the signal separating a coerced customer from a clean one.
+
+Retell has the best timing data of the three, with word-level start and end times, and
+on a blank sheet it would be the strongest technical fit. It cannot call the UAE, and
+switching would mean rewriting a tested integration for a platform that does not solve
+the blocker either.
+
+So Vapi stays: adequate timing, ElevenLabs voice already included, tested, and no worse
+than the alternatives on the thing that actually stopped us. Recorded because "we kept
+what we had" and "we checked and kept what we had" are different, and only the second
+one is a decision.
