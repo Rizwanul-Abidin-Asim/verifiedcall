@@ -212,6 +212,64 @@ DTMF_YES = "1"
 DTMF_NO = "2"
 
 
+def spoken_amount(amount) -> str:
+    """Render an amount so a speech engine says a number, not a string of digits.
+
+    Found on the first real call. We passed "42,000.00" and the assistant said
+    "4 2 0 0 0 0 0", which the provider's own summary then recorded as AED 4,200,000.
+
+    On a fraud check that is not cosmetic. A customer told the wrong amount says "that
+    is not my payment" and the call is over, and the one number the call exists to
+    confirm is the one we got wrong. Words remove the ambiguity in every voice and
+    every locale, at the cost of being slightly longer to say.
+    """
+    whole = int(amount)
+    cents = int(round((float(amount) - whole) * 100))
+    words = _in_words(whole)
+    if cents:
+        words = f"{words} and {_in_words(cents)}"
+    return words
+
+
+_ONES = (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen"
+).split()
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty",
+         "ninety")
+
+
+def _under_hundred(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    tens, rest = divmod(n, 10)
+    return _TENS[tens] + (f"-{_ONES[rest]}" if rest else "")
+
+
+def _under_thousand(n: int) -> str:
+    if n < 100:
+        return _under_hundred(n)
+    hundreds, rest = divmod(n, 100)
+    return _ONES[hundreds] + " hundred" + (f" and {_under_hundred(rest)}" if rest else "")
+
+
+def _in_words(n: int) -> str:
+    """English number words. Only the scales a payment can plausibly reach."""
+    if n == 0:
+        return "zero"
+    if n < 0:
+        return f"minus {_in_words(-n)}"
+    parts: list[str] = []
+    for size, name in ((1_000_000_000, "billion"), (1_000_000, "million"),
+                       (1_000, "thousand")):
+        if n >= size:
+            count, n = divmod(n, size)
+            parts.append(f"{_in_words(count)} {name}")
+    if n:
+        parts.append(_under_thousand(n))
+    return " ".join(parts)
+
+
 def normalise_language(locale: str | None) -> Language:
     """Map a customer locale onto a script. Unknown locales fall back to English."""
     if not locale:

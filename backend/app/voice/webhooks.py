@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Transaction, VoiceCall, VoiceChannel, VoiceStatus
 from app.db.session import get_session
 from app.voice.classify import Answer, Reply, assess
-from app.voice.scripts import normalise_language, script_for
+from app.voice.scripts import normalise_language, script_for, spoken_amount
 from app.voice.vapi_client import answers_from_structured, response_gaps
 
 log = logging.getLogger("voice.webhook")
@@ -167,7 +167,7 @@ async def web_session(transaction_id: uuid.UUID, session: SessionDep) -> dict:
         "public_key": settings.vapi_public_key,
         "assistant": build_assistant(
             script_for(txn.customer_locale),
-            amount=f"{txn.amount:,.2f}", currency=txn.currency,
+            amount=spoken_amount(txn.amount), currency=txn.currency,
             beneficiary=txn.merchant_name,
         ),
     }
