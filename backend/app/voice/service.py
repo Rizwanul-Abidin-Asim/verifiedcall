@@ -17,7 +17,7 @@ from app.db.models import Transaction, VoiceCall, VoiceChannel, VoiceOutcome, Vo
 from app.db.session import get_sessionmaker
 from app.services.events import broker
 from app.voice.classify import RELEASES_PAYMENT, Assessment, assess
-from app.voice.scripts import normalise_language, script_for
+from app.voice.scripts import normalise_language, script_for, spoken_amount
 from app.voice.vapi_client import (
     answers_from_structured,
     duration_of,
@@ -87,7 +87,7 @@ async def start_intervention(session: AsyncSession, txn: Transaction) -> VoiceCa
     try:
         started = await place_call(
             msisdn=txn.customer_msisdn, locale=txn.customer_locale,
-            amount=f"{txn.amount:,.2f}", currency=txn.currency,
+            amount=spoken_amount(txn.amount), currency=txn.currency,
             beneficiary=txn.merchant_name, transaction_id=txn.id,
         )
     except Exception as exc:  # noqa: BLE001 - a failed dial must not lose the record

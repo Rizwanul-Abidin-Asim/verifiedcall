@@ -107,8 +107,16 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
         "required": [q.key for q in script.questions],
     }
 
+    # The opening ends by asking the first question. On the first real call the
+    # assistant introduced itself, then waited, and a model with nothing to reply to
+    # stays quiet: the customer heard a statement, no question, and hung up after
+    # thirty-three seconds of silence. Opening with a question makes the customer's
+    # turn unambiguous and gives the model something to continue from.
+    opening = script.rendered_opening(amount, currency, beneficiary)
+    first_question = script.questions[0].text
+
     return {
-        "firstMessage": script.rendered_opening(amount, currency, beneficiary),
+        "firstMessage": f"{opening} {first_question}",
         "analysisPlan": {
             "structuredDataPlan": {
                 "enabled": True,
@@ -131,8 +139,11 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
                 "role": "system",
                 "content": (
                     f"You are an automated bank security check speaking "
-                    f"{script.language.value}. Ask exactly these three questions, in "
-                    f"order, and nothing else:\n{questions}\n\n"
+                    f"{script.language.value}. These are the three questions, in "
+                    f"order:\n{questions}\n\n"
+                    "You have already asked question 1 as part of your greeting. Wait "
+                    "for the answer, then ask question 2, then question 3, and nothing "
+                    "else. "
                     "Accept a spoken yes or no, or a keypad press of 1 for yes and 2 for "
                     "no. Do not argue, do not reassure, do not explain the fraud. If the "
                     "customer answers anything other than yes or no, ask the same "

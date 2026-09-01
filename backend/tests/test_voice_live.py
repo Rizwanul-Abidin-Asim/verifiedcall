@@ -30,7 +30,7 @@ from app.db.models import (
     VoiceStatus,
 )
 from app.voice.classify import Reply, assess
-from app.voice.scripts import SCRIPTS, Language
+from app.voice.scripts import SCRIPTS, Language, spoken_amount
 from app.voice.service import resolve_call
 from app.voice.vapi_client import (
     VAPI_BASE,
@@ -397,7 +397,8 @@ async def test_web_session_hands_the_browser_a_script_it_did_not_write(
         schema = assistant["analysisPlan"]["structuredDataPlan"]["schema"]
         assert list(schema["properties"]) == [
             "others_present", "asked_to_pay", "told_to_keep_secret"]
-        assert "42,000.00" in assistant["firstMessage"]
+        # In words, not digits. A speech engine reads "42,000.00" one digit at a time.
+        assert "forty-two thousand" in assistant["firstMessage"]
 
 
 async def test_web_session_never_leaks_the_private_key(session, monkeypatch):
@@ -487,3 +488,74 @@ async def test_the_web_channel_does_not_dial(session, monkeypatch):
     assert call.channel is VoiceChannel.WEB
     assert call.status is VoiceStatus.RINGING
     assert call.language == "ar"        # the locale still chooses the script
+
+
+# ------------------------------------------- what the first real call taught us
+
+# Both of these are regressions from a live call, not hypotheticals. The call connected,
+# the assistant spoke, and two things were wrong that no unit test would have caught,
+# because both only exist once a speech engine reads the text out loud.
+
+
+@pytest.mark.parametrize("amount,expected", [
+    ("42000.00", "forty-two thousand"),
+    ("8000.00", "eight thousand"),
+    ("240.00", "two hundred and forty"),
+    ("18500.00", "eighteen thousand five hundred"),
+    ("6300.00", "six thousand three hundred"),
+    ("1000000.00", "one million"),
+    ("0.00", "zero"),
+])
+async def test_amounts_are_spoken_as_numbers_not_digits(amount, expected):
+    """We sent "42,000.00" and the assistant said "4 2 0 0 0 0 0".
+
+    The provider's own call summary then recorded it as AED 4,200,000. A customer told
+    the wrong amount says "that is not my payment" and the call is over, having got
+    wrong the single number it existed to confirm.
+    """
+    assert spoken_amount(Decimal(amount)) == expected
+
+
+async def test_a_spoken_amount_contains_no_digits_at_all():
+    """The failure mode was punctuation being stripped and digits read one by one.
+
+    No digits means nothing left to read that way.
+    """
+    for amount in ("42000.00", "18500.00", "6300.50", "999.99"):
+        assert not any(c.isdigit() for c in spoken_amount(Decimal(amount)))
+
+
+@pytest.mark.parametrize("language", list(Language))
+async def test_the_opening_ends_by_asking_the_first_question(language):
+    """The assistant introduced itself, then waited, and said nothing further.
+
+    A model with nothing to reply to stays silent. The customer heard a statement
+    rather than a question, said nothing, and hung up after thirty-three seconds. The
+    greeting now carries question one, so the customer's turn is unambiguous.
+    """
+    assistant = build_assistant(
+        SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
+    opening = assistant["firstMessage"]
+    first_question = SCRIPTS[language].questions[0].text
+
+    assert first_question in opening
+    assert opening.rstrip().endswith(first_question.rstrip())
+
+
+@pytest.mark.parametrize("language", list(Language))
+async def test_the_model_is_told_the_first_question_is_already_asked(language):
+    """Otherwise it repeats question one and the customer answers it twice."""
+    assistant = build_assistant(
+        SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
+    system = assistant["model"]["messages"][0]["content"]
+    assert "already asked question 1" in system
+    # All three still listed, so the model knows what two and three are.
+    for question in SCRIPTS[language].questions:
+        assert question.text in system
+
+
+async def test_the_opening_carries_the_amount_in_words():
+    assistant = build_assistant(
+        SCRIPTS[Language.EN], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
+    assert "forty-two thousand" in assistant["firstMessage"]
+    assert "42,000" not in assistant["firstMessage"]
