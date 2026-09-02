@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { WebCall } from "@/components/WebCall";
+import { IncomingCall } from "@/components/IncomingCall";
 import {
   ApiError,
   evaluatePayment,
@@ -283,15 +283,17 @@ export default function Checkout() {
           </div>
         )}
 
-        {/* A held payment on the browser channel waits for the customer to pick up
-            here, because no phone will ring. Everything after that is shared. */}
+        {/* A held payment on the in-app channel takes over the screen, because that
+            is what a call does. Everything after the call starts is shared with the
+            phone path. */}
         {decision?.outcome === "intervene" &&
           voice?.channel === "web" &&
           voice.status !== "completed" &&
           voice.status !== "failed" && (
-            <WebCall
+            <IncomingCall
               transactionId={decision.transaction_id}
-              language={voice.language}
+              amountLabel={money(scenario.amount, "AED")}
+              beneficiary={scenario.merchant}
             />
           )}
 

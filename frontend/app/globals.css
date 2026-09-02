@@ -276,3 +276,246 @@ button.pay:disabled { background: var(--faint); cursor: not-allowed; }
 .qa-row { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.85rem; padding: 0.4rem 0.6rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
 .qa-row .q { color: var(--muted); }
 .qa-row .a { font-family: var(--mono); font-size: 0.8rem; }
+
+/* ------------------------------------------------------------------ call screen
+
+   The security check as the customer sees it: a call inside the banking app.
+
+   Deliberately a bank app, not a copy of the phone's own dialler. Imitating the system
+   call screen would imply carrier integration we do not have, and everything else in
+   this project is careful about that line.
+
+   Built for a phone held in the hand and scaled up for a laptop, rather than the other
+   way round, because the phone is where this is meant to be seen.               */
+
+.callscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(120% 80% at 50% 0%, #2b3350 0%, #191b2a 55%, #12131f 100%);
+  color: #fff;
+  padding: max(1.25rem, env(safe-area-inset-top)) 1.25rem
+           max(1.25rem, env(safe-area-inset-bottom));
+  animation: callscreen-in 0.35s ease-out;
+}
+
+@keyframes callscreen-in {
+  from { opacity: 0; transform: scale(1.03); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.callscreen-inner {
+  width: 100%;
+  max-width: 26rem;
+  height: 100%;
+  max-height: 46rem;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+  text-align: center;
+}
+
+.callscreen-app {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.callscreen-who {
+  /* Caller at the top, actions at the bottom, the way a call screen sits. Nudged down
+     from the very top so it does not crowd the app name above it. */
+  align-self: start;
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  margin-top: clamp(1rem, 6vh, 3rem);
+}
+
+.callscreen-avatar {
+  width: 5.5rem;
+  height: 5.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(36, 126, 235, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #7fb2f5;
+  margin-bottom: 0.35rem;
+}
+
+/* Ringing pulse. Two rings so it reads as a repeating call, not a loading spinner. */
+.callscreen-avatar.is-ringing { animation: callscreen-pulse 2s ease-out infinite; }
+
+@keyframes callscreen-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(36, 126, 235, 0.45),
+                     0 0 0 0 rgba(36, 126, 235, 0.28); }
+  70%  { box-shadow: 0 0 0 1.6rem rgba(36, 126, 235, 0),
+                     0 0 0 2.8rem rgba(36, 126, 235, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(36, 126, 235, 0),
+                     0 0 0 0 rgba(36, 126, 235, 0); }
+}
+
+.callscreen-who h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.callscreen-status {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.callscreen-about {
+  margin: 0.4rem 0 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.78);
+  max-width: 19rem;
+}
+
+/* Speaking indicator. Bars rest flat and rise only while the assistant talks, so the
+   customer can tell whose turn it is without reading anything. */
+.callscreen-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  height: 2.2rem;
+}
+
+.callscreen-wave span {
+  width: 0.28rem;
+  height: 0.28rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.4);
+  transition: background 0.2s ease;
+}
+
+.callscreen-wave.is-speaking span {
+  background: #7fb2f5;
+  animation: callscreen-bar 0.9s ease-in-out infinite;
+}
+
+@keyframes callscreen-bar {
+  0%, 100% { height: 0.28rem; }
+  50%      { height: 1.9rem; }
+}
+
+.callscreen-lines {
+  align-self: end;
+  display: grid;
+  gap: 0.4rem;
+  max-height: 11rem;
+  overflow-y: auto;
+  padding: 0 0.25rem;
+  text-align: left;
+}
+
+.callscreen-line {
+  justify-self: start;
+  max-width: 88%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.9rem 0.9rem 0.9rem 0.2rem;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.callscreen-line.is-you {
+  justify-self: end;
+  border-radius: 0.9rem 0.9rem 0.2rem 0.9rem;
+  background: rgba(36, 126, 235, 0.34);
+}
+
+.callscreen-error {
+  margin: 0;
+  color: #ffb4be;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.callscreen-actions {
+  align-self: end;
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+  padding-bottom: 0.5rem;
+}
+
+.callscreen-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2.5rem;
+}
+
+.callbtn {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.8);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.callbtn > svg,
+.callbtn.is-mute > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+}
+
+.callbtn.is-answer > svg { background: #12a05e; color: #fff; padding: 1.1rem; }
+.callbtn.is-end > svg    { background: #d33b4e; color: #fff; padding: 1.1rem; }
+
+.callbtn.is-answer > svg { animation: callscreen-nudge 1.8s ease-in-out infinite; }
+
+@keyframes callscreen-nudge {
+  0%, 92%, 100% { transform: translateY(0); }
+  96%           { transform: translateY(-0.28rem); }
+}
+
+.callbtn.is-mute {
+  width: 4rem;
+  padding: 0.9rem 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.callbtn:active { opacity: 0.75; }
+
+.callscreen-note {
+  margin: 0;
+  max-width: 18rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .callscreen,
+  .callscreen-avatar.is-ringing,
+  .callbtn.is-answer > svg,
+  .callscreen-wave.is-speaking span { animation: none; }
+}
