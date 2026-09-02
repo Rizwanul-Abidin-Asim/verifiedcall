@@ -68,9 +68,16 @@ async def catch_everything(request: Request, call_next):
 
 
 # Added last, so it wraps everything above and labels error responses too.
+#
+# The deployed frontend needs its own origin allowed. A wildcard is not an option here
+# because allow_credentials forbids it, and Vercel gives every deployment a different
+# hostname, so the preview domains are matched by pattern instead of listed. Local
+# development keeps working without any configuration.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[origin.strip()
+                   for origin in settings.cors_origins.split(",") if origin.strip()],
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

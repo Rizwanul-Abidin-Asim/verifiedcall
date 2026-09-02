@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # only, Retell's managed numbers cover sixteen countries that do not include the
     # Emirates, and ElevenLabs does not issue numbers at all. Twilio publishes a rate
     # for UAE mobiles, so the carrier is the layer that can actually place the call.
+    # Which browsers may call this API. Comma separated. The regex covers Vercel, where
+    # every deployment gets its own hostname, so listing them is not possible.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_origin_regex: str = r"https://.*\.vercel\.app"
+
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
