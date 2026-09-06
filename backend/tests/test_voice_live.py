@@ -115,12 +115,12 @@ async def test_junk_in_the_message_list_is_survived():
 
 async def test_flat_structured_data_becomes_answers_with_timing():
     answers = answers_from_structured(
-        {"others_present": "no", "asked_to_pay": "no", "told_to_keep_secret": "no"},
+        {"account_at_risk": "no", "details_given_by_other": "no", "told_to_keep_secret": "no"},
         Language.EN, response_gaps(HESITANT_CALL))
 
     assert [a.reply for a in answers] == [Reply.NO, Reply.NO, Reply.NO]
     assert [a.question_key for a in answers] == [
-        "others_present", "asked_to_pay", "told_to_keep_secret"]
+        "account_at_risk", "details_given_by_other", "told_to_keep_secret"]
     # Only the last one crosses the hesitation threshold, and it is the one that matters.
     assert [a.hesitant for a in answers] == [False, False, True]
 
@@ -128,7 +128,7 @@ async def test_flat_structured_data_becomes_answers_with_timing():
 async def test_a_denial_delivered_slowly_is_not_treated_as_a_clean_call():
     """The headline behaviour: denying while stalling routes to a human, not to release."""
     answers = answers_from_structured(
-        {"others_present": "no", "asked_to_pay": "no", "told_to_keep_secret": "no"},
+        {"account_at_risk": "no", "details_given_by_other": "no", "told_to_keep_secret": "no"},
         Language.EN, response_gaps(HESITANT_CALL))
     assessment = assess(answers)
     assert assessment.outcome is not VoiceOutcome.CONFIRMED_LEGITIMATE
@@ -137,7 +137,7 @@ async def test_a_denial_delivered_slowly_is_not_treated_as_a_clean_call():
 async def test_misaligned_timing_is_dropped_rather_than_guessed():
     """Fewer gaps than questions means we cannot say which pause belonged to which."""
     answers = answers_from_structured(
-        {"others_present": "no", "asked_to_pay": "no", "told_to_keep_secret": "no"},
+        {"account_at_risk": "no", "details_given_by_other": "no", "told_to_keep_secret": "no"},
         Language.EN, [5500])
     assert all(a.response_ms == 0 for a in answers)
     assert not any(a.hesitant for a in answers)
@@ -148,14 +148,14 @@ async def test_a_reply_to_the_opening_does_not_shift_the_questions():
     chatty = [turn("bot", "This is your bank.", 0.0, 3000),
               turn("user", "hello?", 4.0)] + HESITANT_CALL[1:]
     answers = answers_from_structured(
-        {"others_present": "no", "asked_to_pay": "no", "told_to_keep_secret": "no"},
+        {"account_at_risk": "no", "details_given_by_other": "no", "told_to_keep_secret": "no"},
         Language.EN, response_gaps(chatty))
     assert [a.hesitant for a in answers] == [False, False, True]
 
 
 async def test_an_admission_is_read_as_an_admission():
     answers = answers_from_structured(
-        {"others_present": "yes", "asked_to_pay": "yes", "told_to_keep_secret": "yes"},
+        {"account_at_risk": "yes", "details_given_by_other": "yes", "told_to_keep_secret": "yes"},
         Language.EN, response_gaps(HESITANT_CALL))
     assert assess(answers).outcome is VoiceOutcome.SCAM_DETECTED
 
@@ -163,7 +163,7 @@ async def test_an_admission_is_read_as_an_admission():
 async def test_the_older_list_shape_still_parses():
     """A payload in flight during a deploy should not be silently dropped."""
     answers = answers_from_structured(
-        [{"question_key": "asked_to_pay", "heard": "yes", "response_ms": 900}],
+        [{"question_key": "details_given_by_other", "heard": "yes", "response_ms": 900}],
         Language.EN)
     assert len(answers) == 1
     assert answers[0].reply is Reply.YES
@@ -176,21 +176,21 @@ async def test_unparseable_extraction_yields_nothing():
 
 async def test_a_value_outside_the_enum_is_unclear_not_a_guess():
     answers = answers_from_structured(
-        {"others_present": "maybe?"}, Language.EN, [])
+        {"account_at_risk": "maybe?"}, Language.EN, [])
     assert answers[0].reply is Reply.UNCLEAR
 
 
 async def test_missing_questions_are_absent_rather_than_invented():
-    answers = answers_from_structured({"asked_to_pay": "no"}, Language.EN, [])
-    assert [a.question_key for a in answers] == ["asked_to_pay"]
+    answers = answers_from_structured({"details_given_by_other": "no"}, Language.EN, [])
+    assert [a.question_key for a in answers] == ["details_given_by_other"]
 
 
 async def test_arabic_questions_keep_their_own_order():
     answers = answers_from_structured(
-        {"others_present": "no", "asked_to_pay": "yes", "told_to_keep_secret": "no"},
+        {"account_at_risk": "no", "details_given_by_other": "yes", "told_to_keep_secret": "no"},
         Language.AR, [])
     assert [a.question_key for a in answers] == [
-        "others_present", "asked_to_pay", "told_to_keep_secret"]
+        "account_at_risk", "details_given_by_other", "told_to_keep_secret"]
     assert assess(answers).outcome is VoiceOutcome.SCAM_DETECTED
 
 
@@ -272,13 +272,13 @@ async def test_a_second_report_cannot_overwrite_a_resolved_call(session):
     await session.flush()
 
     scam = assess(answers_from_structured(
-        {"others_present": "yes", "asked_to_pay": "yes", "told_to_keep_secret": "yes"},
+        {"account_at_risk": "yes", "details_given_by_other": "yes", "told_to_keep_secret": "yes"},
         Language.EN, []))
     first = await resolve_call(session, txn.id, scam, 41, "first report")
     assert first.outcome is VoiceOutcome.SCAM_DETECTED
 
     clean = assess(answers_from_structured(
-        {"others_present": "no", "asked_to_pay": "no", "told_to_keep_secret": "no"},
+        {"account_at_risk": "no", "details_given_by_other": "no", "told_to_keep_secret": "no"},
         Language.EN, []))
     second = await resolve_call(session, txn.id, clean, 41, "second report")
 
@@ -396,7 +396,7 @@ async def test_web_session_hands_the_browser_a_script_it_did_not_write(
         assistant = body["assistant"]
         schema = assistant["analysisPlan"]["structuredDataPlan"]["schema"]
         assert list(schema["properties"]) == [
-            "others_present", "asked_to_pay", "told_to_keep_secret"]
+            "account_at_risk", "details_given_by_other", "told_to_keep_secret"]
         # In words, not digits. A speech engine reads "42,000.00" one digit at a time.
         assert "forty-two thousand" in assistant["firstMessage"]
 

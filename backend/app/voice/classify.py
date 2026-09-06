@@ -96,49 +96,44 @@ def assess(answers: list[Answer], *, answered: bool = True) -> Assessment:
                       "human analyst rather than being released on silence.",
             answers=by_key)
 
-    asked_to_pay = by_key.get("asked_to_pay")
-    secret = by_key.get("told_to_keep_secret")
-    others = by_key.get("others_present")
-
-    # A yes to either coercion question is the answer on its own.
-    admitted = [a for a in (asked_to_pay, secret) if a and a.reply is Reply.YES]
+    # Every question is phrased so that a yes is itself evidence of coercion. That is
+    # the point of the redesign: a scammer coaches the victim to deny being instructed,
+    # but cannot coach them to deny the scam's own story without contradicting it. So
+    # any yes blocks, and the questions do not need naming here.
+    admitted = [a for a in answers if a.reply is Reply.YES]
     if admitted:
         which = " and ".join(a.question_key.replace("_", " ") for a in admitted)
         return Assessment(
             outcome=VoiceOutcome.SCAM_DETECTED,
-            rationale=f"The customer confirmed {which}. That is someone else directing "
-                      f"this payment, so it stays blocked.",
+            rationale=f"The customer confirmed {which}. That is the shape of a coached "
+                      f"payment, so it stays blocked.",
             answers=by_key)
 
-    # A denial that took a long time is not the same as a quick denial.
+    # A denial that took a long time is not the same as a quick denial. The secrecy
+    # question is asked last on purpose: it is the one a coached victim has been told
+    # to deny, so it is where the pause is measured.
+    secret = by_key.get("told_to_keep_secret")
     if secret and secret.reply is Reply.NO and secret.hesitant and not secret.from_keypad:
         return Assessment(
             outcome=VoiceOutcome.INCONCLUSIVE,
-            rationale=f"The customer denied being told to keep the payment secret, but "
-                      f"took {secret.response_ms}ms to answer. Scammers coach victims to "
-                      f"deny exactly this, so the hesitation is treated as a signal and "
+            rationale=f"The customer denied being told to keep the payment from the bank, "
+                      f"but took {secret.response_ms}ms to answer. Scammers coach victims "
+                      f"to deny exactly this, so the hesitation is treated as a signal and "
                       f"the payment goes to a human analyst.",
             answers=by_key)
 
     if any(a.reply is Reply.UNCLEAR for a in answers):
         return Assessment(
             outcome=VoiceOutcome.INCONCLUSIVE,
-            rationale="At least one answer could not be understood. Rather than guess, "
-                      "the payment goes to a human analyst.",
-            answers=by_key)
-
-    if others and others.reply is Reply.YES:
-        return Assessment(
-            outcome=VoiceOutcome.INCONCLUSIVE,
-            rationale="The customer says somebody else is present. They denied being "
-                      "instructed, but a person in the room may be why. A human analyst "
-                      "should call back when they are alone.",
+            rationale="At least one answer could not be understood, or a question was "
+                      "never answered. Rather than guess, the payment goes to a human "
+                      "analyst.",
             answers=by_key)
 
     return Assessment(
         outcome=VoiceOutcome.CONFIRMED_LEGITIMATE,
-        rationale="The customer denied being contacted, denied being told to keep the "
-                  "payment quiet, and answered without hesitation. Releasing the payment.",
+        rationale="The customer denied every part of the scam story and answered without "
+                  "hesitation. Releasing the payment.",
         answers=by_key)
 
 

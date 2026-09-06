@@ -85,15 +85,22 @@ _EN = Script(
         "I need to ask you three short questions."
     ),
     questions=[
-        Question(key="others_present",
-                 text="Is anyone else on another call with you, or in the room with you "
-                      "right now? Say yes or no, or press 1 for yes and 2 for no."),
-        Question(key="asked_to_pay", scam_if_yes=True,
-                 text="Did someone contact you and ask you to make this payment? "
-                      "Say yes or no, or press 1 for yes and 2 for no."),
+        # Every question asks about the scam's own story rather than about being
+        # coached. A scammer tells the victim "say no to everything", and can coach a
+        # no to "did someone ask you to pay". They cannot coach a no to "were you told
+        # your money is at risk" without contradicting the story they are telling.
+        # The secrecy question stays last: it is where the pause is measured.
+        Question(key="account_at_risk", scam_if_yes=True,
+                 text="Has anyone told you today that your account or your money is at "
+                      "risk? Say yes or no, or press 1 for yes and 2 for no."),
+        Question(key="details_given_by_other", scam_if_yes=True,
+                 text="Were the account details for this payment given to you by someone "
+                      "else, rather than found by you? Say yes or no, or press 1 for yes "
+                      "and 2 for no."),
         Question(key="told_to_keep_secret", scam_if_yes=True,
-                 text="Were you told not to discuss this payment with your bank? "
-                      "Say yes or no, or press 1 for yes and 2 for no."),
+                 text="Has anyone asked you to keep this payment from your bank, or told "
+                      "you that bank staff cannot be trusted? Say yes or no, or press 1 "
+                      "for yes and 2 for no."),
     ],
     closing_released="Thank you. Your payment will go through as normal. Goodbye.",
     closing_held=(
@@ -113,14 +120,16 @@ _AR = Script(
         "سأطرح عليك ثلاثة أسئلة قصيرة."
     ),
     questions=[
-        Question(key="others_present",
-                 text="هل يوجد شخص آخر على مكالمة معك، أو في الغرفة معك الآن؟ "
+        # Rewritten 2026-09-07 with the English. Not yet checked by a native speaker.
+        Question(key="account_at_risk", scam_if_yes=True,
+                 text="هل أخبرك أحد اليوم بأن حسابك أو أموالك في خطر؟ "
                       "قل نعم أو لا، أو اضغط 1 لنعم و 2 للا."),
-        Question(key="asked_to_pay", scam_if_yes=True,
-                 text="هل اتصل بك شخص وطلب منك إجراء هذه العملية؟ "
+        Question(key="details_given_by_other", scam_if_yes=True,
+                 text="هل أعطاك شخص آخر تفاصيل الحساب لهذه العملية، بدلاً من أن تجدها بنفسك؟ "
                       "قل نعم أو لا، أو اضغط 1 لنعم و 2 للا."),
         Question(key="told_to_keep_secret", scam_if_yes=True,
-                 text="هل طُلب منك عدم التحدث عن هذه العملية مع مصرفك؟ "
+                 text="هل طلب منك أحد إخفاء هذه العملية عن مصرفك، "
+                      "أو قال لك إن موظفي المصرف لا يمكن الوثوق بهم؟ "
                       "قل نعم أو لا، أو اضغط 1 لنعم و 2 للا."),
     ],
     closing_released="شكراً لك. سيتم إتمام عمليتك بشكل طبيعي. مع السلامة.",
@@ -140,14 +149,17 @@ _HI = Script(
         "मैं आपसे तीन छोटे सवाल पूछूँगा।"
     ),
     questions=[
-        Question(key="others_present",
-                 text="क्या इस समय कोई और आपके साथ दूसरी कॉल पर है, या आपके कमरे में मौजूद है? "
+        # Rewritten 2026-09-07 with the English. Not yet checked by a native speaker.
+        Question(key="account_at_risk", scam_if_yes=True,
+                 text="क्या आज किसी ने आपसे कहा कि आपका खाता या आपका पैसा खतरे में है? "
                       "हाँ या नहीं कहें, या हाँ के लिए 1 और नहीं के लिए 2 दबाएँ।"),
-        Question(key="asked_to_pay", scam_if_yes=True,
-                 text="क्या किसी ने आपसे संपर्क करके यह भुगतान करने के लिए कहा? "
+        Question(key="details_given_by_other", scam_if_yes=True,
+                 text="क्या इस भुगतान के खाते का विवरण आपको किसी और ने दिया, "
+                      "न कि आपने खुद खोजा? "
                       "हाँ या नहीं कहें, या हाँ के लिए 1 और नहीं के लिए 2 दबाएँ।"),
         Question(key="told_to_keep_secret", scam_if_yes=True,
-                 text="क्या आपसे कहा गया था कि इस भुगतान के बारे में अपने बैंक को न बताएँ? "
+                 text="क्या किसी ने आपसे कहा कि यह भुगतान अपने बैंक से छिपाएँ, "
+                      "या कहा कि बैंक के कर्मचारियों पर भरोसा नहीं किया जा सकता? "
                       "हाँ या नहीं कहें, या हाँ के लिए 1 और नहीं के लिए 2 दबाएँ।"),
     ],
     closing_released="धन्यवाद। आपका भुगतान सामान्य रूप से पूरा हो जाएगा। नमस्ते।",
@@ -167,14 +179,17 @@ _UR = Script(
         "میں آپ سے تین مختصر سوال پوچھوں گا۔"
     ),
     questions=[
-        Question(key="others_present",
-                 text="کیا اس وقت کوئی اور آپ کے ساتھ دوسری کال پر ہے، یا آپ کے کمرے میں موجود ہے؟ "
+        # Rewritten 2026-09-07 with the English. Not yet checked by a native speaker.
+        Question(key="account_at_risk", scam_if_yes=True,
+                 text="کیا آج کسی نے آپ کو بتایا کہ آپ کا اکاؤنٹ یا آپ کی رقم خطرے میں ہے؟ "
                       "ہاں یا نہیں کہیں، یا ہاں کے لیے 1 اور نہیں کے لیے 2 دبائیں۔"),
-        Question(key="asked_to_pay", scam_if_yes=True,
-                 text="کیا کسی نے آپ سے رابطہ کر کے یہ ادائیگی کرنے کو کہا؟ "
+        Question(key="details_given_by_other", scam_if_yes=True,
+                 text="کیا اس ادائیگی کے اکاؤنٹ کی تفصیلات آپ کو کسی اور نے دیں، "
+                      "نہ کہ آپ نے خود تلاش کیں؟ "
                       "ہاں یا نہیں کہیں، یا ہاں کے لیے 1 اور نہیں کے لیے 2 دبائیں۔"),
         Question(key="told_to_keep_secret", scam_if_yes=True,
-                 text="کیا آپ سے کہا گیا تھا کہ اس ادائیگی کے بارے میں اپنے بینک کو نہ بتائیں؟ "
+                 text="کیا کسی نے آپ سے کہا کہ یہ ادائیگی اپنے بینک سے چھپائیں، "
+                      "یا کہا کہ بینک کے عملے پر بھروسہ نہیں کیا جا سکتا؟ "
                       "ہاں یا نہیں کہیں، یا ہاں کے لیے 1 اور نہیں کے لیے 2 دبائیں۔"),
     ],
     closing_released="شکریہ۔ آپ کی ادائیگی معمول کے مطابق مکمل ہو جائے گی۔ خدا حافظ۔",

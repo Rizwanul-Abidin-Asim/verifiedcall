@@ -32,7 +32,7 @@ from cache and the dashboard says so.
 | 1:10 | **Theft.** Scenario 2. Declined. | Checkout |
 | 1:25 | **Why declined.** The network cannot place the phone where the payment came from, so calling the registered number would not reach the person spending the money. | Dashboard, reasoning trace |
 | 1:50 | **Coercion.** Scenario 3. Identical signals, one difference: the phone is exactly where it should be. Held, and the customer is called. | Checkout, let the call resolve on screen |
-| 2:20 | **The call.** Three questions. The customer admits they were told to pay and told not to tell their bank. Payment blocked. | Checkout shows the answers |
+| 2:20 | **The call.** Three questions about the scam's own story. The customer confirms they were told their money was at risk, that the account details came from someone else, and that they were told to keep it from the bank. Payment blocked. | Checkout shows the answers |
 | 2:40 | **Honesty.** Point at the demo-seam banner and the cached labels. "Sandbox numbers are not real phones. We show the seam rather than hide it." | Dashboard detail |
 | 2:50 | **Close.** "Existing tools ask is this really you. We ask whether someone is standing over you while you do it, in the customer's own language, before the money leaves." | |
 

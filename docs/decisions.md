@@ -198,3 +198,36 @@ So Vapi stays: adequate timing, ElevenLabs voice already included, tested, and n
 than the alternatives on the thing that actually stopped us. Recorded because "we kept
 what we had" and "we checked and kept what we had" are different, and only the second
 one is a decision.
+
+## ADR-010 — The call asks about the scam's story, not about being coached
+
+The first three questions asked whether anyone was with the customer, whether
+someone had asked them to pay, and whether they had been told to keep it from the
+bank. They are the standard intervention questions and they have a standard
+weakness: the scammer is on the other line saying "say no to everything". A
+person can be coached to deny being instructed. The questions were testing
+whether the coaching worked.
+
+The questions now ask about the scam itself. Has anyone told you today that your
+account or your money is at risk. Were these account details given to you by
+someone else rather than found by you. Has anyone asked you to keep this payment
+from the bank, or said bank staff cannot be trusted. Each is a load-bearing part
+of the "safe account" story, and a scammer cannot coach a no to it without
+telling the victim their own story was false. Every question is therefore a
+coercion question: a yes to any of them is evidence on its own, and classify.py
+no longer needs to know which question is which.
+
+The secrecy question stays last on purpose. It is the one a coached victim has
+been told hardest to deny, so it is where the pause is measured, and that is
+unchanged.
+
+What this removed: the presence question, and with it the branch that sent a
+payment to a human because someone was in the room. Presence is now inferred the
+way the rest of the system infers it, from the device being where the payment
+claims to be. A fourth question can come back if the demo wants it; it costs
+about fifteen seconds of call.
+
+What this costs: new Arabic, Hindi and Urdu wording, written alongside the
+English and not yet checked by a native speaker, the same caveat the previous
+questions carried. The keypad clause in each language is reused verbatim from
+the old questions and is the one part that has been heard on a real call.
