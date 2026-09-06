@@ -38,6 +38,12 @@ class TransactionContext(BaseModel):
             f"Amount {self.amount} {self.currency} to {self.merchant_name} ({payee}). "
             f"Local time {self.local_hour:02d}:00. Customer language: {self.customer_locale}."
         )
+    device_location_denied: bool = False
+    """The customer refused to share the handset's position.
+
+    Not proof of anything on its own. A bank still has to decide without it, and the
+    honest reading is that we lost a check rather than that the customer is guilty."""
+
 
 
 class ReasoningStep(BaseModel):

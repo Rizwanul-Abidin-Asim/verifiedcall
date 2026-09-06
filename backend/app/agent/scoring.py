@@ -29,6 +29,9 @@ WEIGHTS = {
     "amount_over_10k": 15,
     "amount_over_25k": 20,
     "unusual_hour": 5,
+    # Refusing to share position is weak evidence and weighted like it. It removes a
+    # check rather than proving anything, and plenty of careful people decline.
+    "device_location_denied": 5,
     # --- network signals ---
     # Call forwarding outranks SIM swap for APP fraud. A swapped SIM says an identity was
     # compromised at some point; forwarding says the customer's calls are being
@@ -69,6 +72,14 @@ def score_context(ctx: TransactionContext) -> list[Finding]:
                 WEIGHTS[key],
                 "Large transfers are where APP fraud losses concentrate.", key))
             break
+
+    if ctx.device_location_denied:
+        found.append((
+            "Device would not share its location", WEIGHTS["device_location_denied"],
+            "Without the handset's own position we cannot ask the network whether it "
+            "agrees, so one of two independent checks is missing. Weighted lightly: "
+            "declining to share a location is common and not itself suspicious.",
+            "device_location_denied"))
 
     if ctx.local_hour in UNUSUAL_HOURS:
         found.append((

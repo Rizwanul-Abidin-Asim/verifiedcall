@@ -41,6 +41,15 @@ class EvaluateRequest(BaseModel):
     local_hour: int | None = Field(default=None, ge=0, le=23)
     expected_city: str = Field(default="AE-DXB", max_length=16)
 
+    # Where the device says it is, from the browser. Optional, because a customer can
+    # refuse and a bank still has to decide. When present it becomes the centre of the
+    # network location check, which is the real question: does the operator agree with
+    # the handset about where it is? Two sources are harder to fake than one.
+    device_latitude: float | None = Field(default=None, ge=-90, le=90)
+    device_longitude: float | None = Field(default=None, ge=-180, le=180)
+    device_location_accuracy_m: float | None = Field(default=None, ge=0)
+    device_location_denied: bool = False
+
     @field_validator("currency")
     @classmethod
     def upper_currency(cls, v: str) -> str:

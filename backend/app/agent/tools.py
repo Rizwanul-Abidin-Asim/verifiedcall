@@ -36,6 +36,8 @@ class AgentDeps:
     context: TransactionContext
     collected: list[SignalResult] = field(default_factory=list)
     expected_city: str = "AE-DXB"
+    device_latitude: float | None = None
+    device_longitude: float | None = None
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     async def capture(self, signal: SignalResult, request_payload: dict) -> None:
@@ -145,7 +147,16 @@ async def verify_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
     if (existing := _already_pulled(deps, "location_verification")) is not None:
         return f"Already checked: {existing.verification_result.value}."
 
-    latitude, longitude = CITY_CENTRES.get(deps.expected_city, CITY_CENTRES["AE-DXB"])
+    # Prefer where the handset says it is. Asking the network "is the SIM within 50km
+    # of the point the browser reported" compares two independent sources; falling back
+    # to a city centre only compares the network against an assumption.
+    if deps.device_latitude is not None and deps.device_longitude is not None:
+        latitude, longitude = deps.device_latitude, deps.device_longitude
+        against = "the location the device reported"
+    else:
+        latitude, longitude = CITY_CENTRES.get(deps.expected_city,
+                                               CITY_CENTRES["AE-DXB"])
+        against = "the expected location"
     payload = {
         "device": {"phoneNumber": deps.context.signal_msisdn},
         "area": {"areaType": "CIRCLE",
@@ -156,9 +167,9 @@ async def verify_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
     await deps.capture(signal, payload)
 
     described = {
-        "TRUE": "The device IS within 50km of the expected location.",
-        "FALSE": "The device is NOT within 50km of the expected location.",
-        "PARTIAL": "The device is only partially within the expected area.",
+        "TRUE": f"The network places the SIM within 50km of {against}.",
+        "FALSE": f"The network does NOT place the SIM within 50km of {against}.",
+        "PARTIAL": f"The SIM is only partially within 50km of {against}.",
         "UNKNOWN": "The network could not locate the device.",
     }[signal.verification_result.value]
     rate = f" Match rate {signal.match_rate}%." if signal.match_rate is not None else ""
