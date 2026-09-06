@@ -1109,3 +1109,67 @@ button.pay:disabled { background: var(--faint); cursor: not-allowed; }
   .bk-drawer-body, .bk-draw, .bk-amount-display, .bk-payee-avatar { animation: none; transition: none; }
   .bk-draw { stroke-dashoffset: 0; }
 }
+
+/* In-call keypad. The script says "press 1 for yes and 2 for no", and on a phone line
+   those are real keys. In the browser these two buttons are those keys. Big enough
+   to hit without looking, because the customer is listening, not reading. */
+.callscreen-keys {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 20rem;
+  margin-bottom: 0.5rem;
+}
+
+.callkey {
+  display: grid;
+  justify-items: center;
+  gap: 0.15rem;
+  padding: 0.85rem 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.callkey:active { transform: scale(0.96); }
+.callkey.is-yes:active { background: rgba(18, 160, 94, 0.35); }
+.callkey.is-no:active  { background: rgba(211, 59, 78, 0.35); }
+
+.callkey-digit {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* Request and Cards. Same slide as Send: in from the right, home eases left. */
+.bk-phone[data-screen="request"] .bk-request,
+.bk-phone[data-screen="cards"]   .bk-cards   { opacity: 1; pointer-events: auto; transform: none; }
+.bk-phone[data-screen="home"]    .bk-request,
+.bk-phone[data-screen="home"]    .bk-cards   { transform: translateX(100%); }
+.bk-phone[data-screen="request"] .bk-home,
+.bk-phone[data-screen="cards"]   .bk-home    { transform: translateX(-24%); }
+
+.bk-request { display: flex; flex-direction: column; }
+.bk-request .bk-amount { margin-top: auto; }
+
+.bk-cardface { aspect-ratio: 1.586; display: grid; align-content: space-between; }
+.bk-cardface.is-frozen { filter: saturate(.25) brightness(.85); }
+.bk-cardface-pan { margin: 0; font-family: var(--mono); font-size: 1.15rem; letter-spacing: .08em; color: var(--bk-ink); }
+.bk-cardface-foot {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .06em;
+  color: var(--bk-muted);
+}
+
+.bk-cta.is-ghost { background: transparent; color: var(--bk-aqua); border: 1px solid var(--bk-aqua); }

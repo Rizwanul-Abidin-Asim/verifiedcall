@@ -158,20 +158,32 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
         "model": {
             "provider": "groq",
             "model": settings.groq_model,
+            # The call skipped question 3 and said goodbye on its own. A deterministic
+            # sample is the cheapest lever against a model improvising the sequence.
+            "temperature": 0,
             "messages": [{
                 "role": "system",
                 "content": (
-                    f"You are an automated bank security check speaking "
-                    f"{script.language.value}. These are the three questions, in "
-                    f"order:\n{questions}\n\n"
-                    "You have already asked question 1 as part of your greeting. Wait "
-                    "for the answer, then ask question 2, then question 3, and nothing "
-                    "else. "
-                    "Accept a spoken yes or no, or a keypad press of 1 for yes and 2 for "
-                    "no. Do not argue, do not reassure, do not explain the fraud. If the "
-                    "customer answers anything other than yes or no, ask the same "
-                    "question once more and then move on. When all three are answered, "
-                    "end the call."
+                    f"You are an automated bank security check. Speak only "
+                    f"{script.language.value}.\n\n"
+                    f"Ask these questions, in this exact order, one per turn:\n"
+                    f"{questions}\n\n"
+                    "Rules, in priority order.\n"
+                    "1. Question 1 was already asked in your greeting. Your next turn "
+                    "asks question 2. After the customer answers question 2, ask "
+                    "question 3.\n"
+                    "2. You may end the call ONLY after the customer has answered "
+                    "question 3. Ending before question 3 is answered is a serious "
+                    "error. Do not say goodbye, thank the customer, or summarise until "
+                    "question 3 has an answer.\n"
+                    "3. Accept a spoken yes or no, the typed word yes or no, or a "
+                    "keypad press of 1 for yes and 2 for no.\n"
+                    "4. If an answer is not a clear yes or no, repeat the same question "
+                    "once, then move on.\n"
+                    "5. Do not argue, reassure, explain fraud, or add anything beyond "
+                    "the questions. One question per turn.\n"
+                    "6. Once question 3 is answered, say exactly: \"Thank you. Please "
+                    "stay on the line.\" Then end the call."
                 ),
             }],
         },

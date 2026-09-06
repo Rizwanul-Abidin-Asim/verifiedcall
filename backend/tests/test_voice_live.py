@@ -548,10 +548,38 @@ async def test_the_model_is_told_the_first_question_is_already_asked(language):
     assistant = build_assistant(
         SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
     system = assistant["model"]["messages"][0]["content"]
-    assert "already asked question 1" in system
+    assert "Question 1 was already asked" in system
     # All three still listed, so the model knows what two and three are.
     for question in SCRIPTS[language].questions:
         assert question.text in system
+
+
+@pytest.mark.parametrize("language", list(Language))
+async def test_the_model_is_forbidden_from_ending_before_question_three(language):
+    """A real call: question 2 answered, then "Goodbye." Question 3 never asked.
+
+    The extractor correctly returned unclear for a question nobody heard and the
+    payment went to a human, which is the safe outcome, but the assistant had been told
+    "then ask question 3" and ignored it. The rule is now the loudest thing in the
+    prompt and the model samples at zero temperature.
+    """
+    assistant = build_assistant(
+        SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
+    system = assistant["model"]["messages"][0]["content"]
+    assert "ONLY after the customer has answered question 3" in system
+    assert "Ending before question 3 is answered is a serious error" in system
+    assert assistant["model"]["temperature"] == 0
+
+
+@pytest.mark.parametrize("language", list(Language))
+async def test_the_opening_does_not_repeat_the_keypad_instruction(language):
+    """The opening ran twenty seconds because it explained the keypad, then question
+    one explained it again. Every question carries the instruction; the opening does
+    not need to. The digits 1 and 2 are the tell in every language, and the amount is
+    spoken in words so no digit can arrive from there."""
+    opening = SCRIPTS[language].rendered_opening(
+        spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
+    assert not any(ch.isdigit() for ch in opening), opening
 
 
 async def test_the_opening_carries_the_amount_in_words():

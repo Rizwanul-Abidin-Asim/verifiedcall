@@ -173,6 +173,23 @@ export function IncomingCall({
     onFinished?.();
   }, [onFinished]);
 
+  // The keypad the script promises. On a phone line these are real DTMF presses; in
+  // the browser there is no dial pad, so a tap injects the word as the customer's own
+  // turn. The assistant hears it exactly as a spoken answer and moves on, and the
+  // transcript the extractor reads carries it. This is also the fallback the
+  // multilingual story depends on: if the transcriber struggles with an accent, the
+  // customer taps.
+  const answerWith = useCallback((word: "yes" | "no") => {
+    const client = vapi.current;
+    if (!client) return;
+    client.send({
+      type: "add-message",
+      message: { role: "user", content: word },
+      triggerResponseEnabled: true,
+    } as Parameters<Vapi["send"]>[0]);
+    setLines((prev) => [...prev, { role: "user", text: word === "yes" ? "1 · Yes" : "2 · No" }]);
+  }, []);
+
   const toggleMute = useCallback(() => {
     const client = vapi.current;
     if (!client) return;
@@ -247,15 +264,27 @@ export function IncomingCall({
           {stage === "connecting" && <p className="callscreen-note">Allow the microphone…</p>}
 
           {stage === "live" && (
-            <div className="callscreen-row">
-              <button className="callbtn is-mute" onClick={toggleMute}>
-                <span>{muted ? "Unmute" : "Mute"}</span>
-              </button>
-              <button className="callbtn is-end" onClick={hangUp}>
-                <PhoneIcon down />
-                <span>End</span>
-              </button>
-            </div>
+            <>
+              <div className="callscreen-keys" role="group" aria-label="Answer with a key">
+                <button className="callkey is-yes" onClick={() => answerWith("yes")}>
+                  <span className="callkey-digit">1</span>
+                  <span>Yes</span>
+                </button>
+                <button className="callkey is-no" onClick={() => answerWith("no")}>
+                  <span className="callkey-digit">2</span>
+                  <span>No</span>
+                </button>
+              </div>
+              <div className="callscreen-row">
+                <button className="callbtn is-mute" onClick={toggleMute}>
+                  <span>{muted ? "Unmute" : "Mute"}</span>
+                </button>
+                <button className="callbtn is-end" onClick={hangUp}>
+                  <PhoneIcon down />
+                  <span>End</span>
+                </button>
+              </div>
+            </>
           )}
 
           {stage === "error" && (
