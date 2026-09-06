@@ -64,9 +64,14 @@ async def evaluate_transaction(
         customer_locale=payload.customer_locale,
         local_hour=payload.local_hour if payload.local_hour is not None else local_hour_now(),
         signal_msisdn=signal_msisdn,
+        device_location_denied=payload.device_location_denied,
     )
 
-    decision = await evaluate(session, txn.id, context, expected_city=payload.expected_city)
+    decision = await evaluate(
+        session, txn.id, context, expected_city=payload.expected_city,
+        device_latitude=payload.device_latitude,
+        device_longitude=payload.device_longitude,
+    )
 
     record = await record_decision(
         session,

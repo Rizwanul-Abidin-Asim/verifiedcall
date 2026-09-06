@@ -129,9 +129,11 @@ async def client(monkeypatch):
     import app.agent.risk_agent as ra
     real_evaluate = ra.evaluate
 
-    async def patched(session, txn_id, context, model=None, expected_city="AE-DXB"):
+    # **kwargs so this stub does not have to be edited every time evaluate() grows an
+    # argument. It forwards whatever the route passes and substitutes only the model.
+    async def patched(session, txn_id, context, model=None, **kwargs):
         return await real_evaluate(session, txn_id, context,
-                                   model=all_four_model(), expected_city=expected_city)
+                                   model=all_four_model(), **kwargs)
 
     monkeypatch.setattr("app.api.routes.transactions.evaluate", patched)
 

@@ -234,11 +234,14 @@ async def evaluate(
     context: TransactionContext,
     model: Model | None = None,
     expected_city: str = "AE-DXB",
+    device_latitude: float | None = None,
+    device_longitude: float | None = None,
 ) -> RiskDecision:
     """Assess one transaction. Always returns a decision — never raises."""
     started = time.perf_counter()
     deps = AgentDeps(session=session, transaction_id=transaction_id, context=context,
-                     expected_city=expected_city)
+                     expected_city=expected_city, device_latitude=device_latitude,
+                     device_longitude=device_longitude)
 
     try:
         agent = build_agent(model)
