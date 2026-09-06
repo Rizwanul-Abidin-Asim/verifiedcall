@@ -175,7 +175,7 @@ Simulated calls follow the same convention on the number being *called*:
 
 | `customer_msisdn` ends | Scripted customer | Outcome |
 |---|---|---|
-| `0` | admits they were told to pay | scam detected, blocked |
+| `0` | confirms every part of the scam story | scam detected, blocked |
 | `1` | answers cleanly | legitimate, released |
 | `2` | denies it, but hesitates | inconclusive, held for an analyst |
 | `9` | does not pick up | no answer, held |

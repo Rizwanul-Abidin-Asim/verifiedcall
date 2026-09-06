@@ -97,9 +97,9 @@ interface VoiceState {
 }
 
 const QUESTION_LABEL: Record<string, string> = {
-  others_present: "Is anyone with you?",
-  asked_to_pay: "Did someone ask you to pay?",
-  told_to_keep_secret: "Told not to tell your bank?",
+  account_at_risk: "Told your money was at risk?",
+  details_given_by_other: "Account details given to you?",
+  told_to_keep_secret: "Told to keep it from the bank?",
 };
 
 export default function BankApp() {

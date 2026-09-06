@@ -33,15 +33,18 @@ from app.voice.webhooks import parse_answers
 
 def test_every_language_has_the_same_three_questions():
     keys = {lang: [q.key for q in s.questions] for lang, s in SCRIPTS.items()}
-    expected = ["others_present", "asked_to_pay", "told_to_keep_secret"]
+    expected = ["account_at_risk", "details_given_by_other", "told_to_keep_secret"]
     for lang, got in keys.items():
         assert got == expected, f"{lang} asks a different set of questions"
 
 
-def test_the_two_coercion_questions_are_marked_in_every_language():
+def test_every_question_is_a_coercion_question_in_every_language():
+    """Each question asks about the scam's own story, so a yes to any of them is itself
+    evidence. That is the design, and classify.py relies on it."""
     for lang, s in SCRIPTS.items():
         flagged = {q.key for q in s.questions if q.scam_if_yes}
-        assert flagged == {"asked_to_pay", "told_to_keep_secret"}, lang
+        assert flagged == {"account_at_risk", "details_given_by_other",
+                           "told_to_keep_secret"}, lang
 
 
 def test_every_script_offers_the_keypad():
@@ -84,9 +87,9 @@ def test_yes_and_no_words_do_not_overlap():
 
 @pytest.mark.parametrize("lang", list(Language))
 def test_spoken_yes_and_no_in_each_language(lang):
-    yes = interpret("asked_to_pay", lang, heard=AFFIRMATIVE[lang][0], keypad=None,
+    yes = interpret("details_given_by_other", lang, heard=AFFIRMATIVE[lang][0], keypad=None,
                     response_ms=800)
-    no = interpret("asked_to_pay", lang, heard=NEGATIVE[lang][0], keypad=None,
+    no = interpret("details_given_by_other", lang, heard=NEGATIVE[lang][0], keypad=None,
                    response_ms=800)
     assert yes.reply is Reply.YES
     assert no.reply is Reply.NO
@@ -95,13 +98,13 @@ def test_spoken_yes_and_no_in_each_language(lang):
 def test_keypad_beats_a_wrong_transcript():
     """The whole point of offering the keypad: when speech recognition mishears, the
     digit is still exact."""
-    a = interpret("asked_to_pay", Language.AR, heard="no", keypad="1", response_ms=900)
+    a = interpret("details_given_by_other", Language.AR, heard="no", keypad="1", response_ms=900)
     assert a.reply is Reply.YES
     assert a.from_keypad
 
 
 def test_unrecognised_speech_is_unclear_not_a_guess():
-    a = interpret("asked_to_pay", Language.EN, heard="mmm well I suppose",
+    a = interpret("details_given_by_other", Language.EN, heard="mmm well I suppose",
                   keypad=None, response_ms=900)
     assert a.reply is Reply.UNCLEAR
 
@@ -117,11 +120,11 @@ def test_hesitation_is_flagged_on_timing_alone():
 # --------------------------------------------------------------- assessment
 
 
-def answers(others="no", asked="no", secret="no", secret_ms=900, lang=Language.EN):
+def answers(risk="no", details="no", secret="no", secret_ms=900, lang=Language.EN):
     words = {"yes": AFFIRMATIVE[lang][0], "no": NEGATIVE[lang][0]}
     return [
-        interpret("others_present", lang, words[others], None, 900),
-        interpret("asked_to_pay", lang, words[asked], None, 1000),
+        interpret("account_at_risk", lang, words[risk], None, 900),
+        interpret("details_given_by_other", lang, words[details], None, 1000),
         interpret("told_to_keep_secret", lang, words[secret], None, secret_ms),
     ]
 
@@ -132,8 +135,8 @@ def test_clean_answers_release_the_payment():
     assert resolution_for(a.outcome) == "released"
 
 
-@pytest.mark.parametrize("field", ["asked", "secret"])
-def test_admitting_either_coercion_question_blocks_the_payment(field):
+@pytest.mark.parametrize("field", ["risk", "details", "secret"])
+def test_admitting_any_part_of_the_scam_story_blocks_the_payment(field):
     a = assess(answers(**{field: "yes"}))
     assert a.outcome is VoiceOutcome.SCAM_DETECTED
     assert resolution_for(a.outcome) == "blocked"
@@ -150,23 +153,25 @@ def test_hesitant_denial_goes_to_a_human_not_through():
 def test_a_hesitant_keypad_denial_is_trusted():
     """Timing means something for speech. Someone fumbling for a key is not evidence."""
     a = assess([
-        interpret("others_present", Language.EN, None, "2", 900),
-        interpret("asked_to_pay", Language.EN, None, "2", 1000),
+        interpret("account_at_risk", Language.EN, None, "2", 900),
+        interpret("details_given_by_other", Language.EN, None, "2", 1000),
         interpret("told_to_keep_secret", Language.EN, None, "2", HESITATION_MS + 3000),
     ])
     assert a.outcome is VoiceOutcome.CONFIRMED_LEGITIMATE
 
 
-def test_someone_else_in_the_room_goes_to_a_human():
-    a = assess(answers(others="yes"))
-    assert a.outcome is VoiceOutcome.INCONCLUSIVE
-    assert resolution_for(a.outcome) == "held_for_analyst"
+def test_being_told_your_money_is_at_risk_blocks_the_payment():
+    """The "safe account" hook. A scammer cannot coach a no to this without
+    contradicting the story they are telling."""
+    a = assess(answers(risk="yes"))
+    assert a.outcome is VoiceOutcome.SCAM_DETECTED
+    assert resolution_for(a.outcome) == "blocked"
 
 
 def test_an_unclear_answer_is_never_treated_as_clean():
     a = assess([
-        interpret("others_present", Language.EN, "no", None, 900),
-        interpret("asked_to_pay", Language.EN, "erm", None, 1000),
+        interpret("account_at_risk", Language.EN, "no", None, 900),
+        interpret("details_given_by_other", Language.EN, "erm", None, 1000),
         interpret("told_to_keep_secret", Language.EN, "no", None, 900),
     ])
     assert a.outcome is VoiceOutcome.INCONCLUSIVE
@@ -223,8 +228,8 @@ def test_real_assistant_definition_carries_the_script():
 
 def test_webhook_parses_a_well_formed_report():
     payload = {"message": {"analysis": {"structuredData": {"answers": [
-        {"question_key": "others_present", "heard": "no", "response_ms": 800},
-        {"question_key": "asked_to_pay", "heard": "yes", "response_ms": 1200},
+        {"question_key": "account_at_risk", "heard": "no", "response_ms": 800},
+        {"question_key": "details_given_by_other", "heard": "yes", "response_ms": 1200},
         {"question_key": "told_to_keep_secret", "keypad": 1, "response_ms": 700},
     ]}}}}
     parsed = parse_answers(payload, Language.EN)
@@ -300,7 +305,7 @@ async def test_resolving_records_answers_and_outcome(session, monkeypatch):
 
     assert call.status is VoiceStatus.COMPLETED
     assert call.outcome is VoiceOutcome.SCAM_DETECTED
-    assert set(call.answers) == {"others_present", "asked_to_pay", "told_to_keep_secret"}
+    assert set(call.answers) == {"account_at_risk", "details_given_by_other", "told_to_keep_secret"}
     assert call.duration_s == duration
     assert call.transcript
 

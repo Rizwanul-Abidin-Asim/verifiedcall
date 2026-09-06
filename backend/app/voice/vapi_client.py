@@ -12,7 +12,7 @@ The simulator picks its outcome from the last digit of the number being called, 
 convention Nokia's sandbox uses for network signals. Scripted, deterministic, and
 obvious from the number itself, so a demo can show any outcome on purpose:
 
-    ...0  the customer admits they were told to make the payment   -> scam detected
+    ...0  the customer confirms every part of the scam story       -> scam detected
     ...1  the customer answers everything cleanly and quickly      -> legitimate
     ...2  the customer denies it, but hesitates on question three  -> inconclusive
     ...9  nobody picks up                                          -> no answer
@@ -47,14 +47,14 @@ class VoiceCallStarted:
 # ------------------------------------------------------------------ simulator
 
 _MOCK_PLAN: dict[str, list[tuple[str, Reply, int]]] = {
-    "0": [("others_present", Reply.YES, 1200),
-          ("asked_to_pay", Reply.YES, 1800),
+    "0": [("account_at_risk", Reply.YES, 1200),
+          ("details_given_by_other", Reply.YES, 1800),
           ("told_to_keep_secret", Reply.YES, 2100)],
-    "1": [("others_present", Reply.NO, 900),
-          ("asked_to_pay", Reply.NO, 1100),
+    "1": [("account_at_risk", Reply.NO, 900),
+          ("details_given_by_other", Reply.NO, 1100),
           ("told_to_keep_secret", Reply.NO, 1000)],
-    "2": [("others_present", Reply.NO, 1000),
-          ("asked_to_pay", Reply.NO, 1400),
+    "2": [("account_at_risk", Reply.NO, 1000),
+          ("details_given_by_other", Reply.NO, 1400),
           ("told_to_keep_secret", Reply.NO, 5200)],   # the hesitation case
 }
 

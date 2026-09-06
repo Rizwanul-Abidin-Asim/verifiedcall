@@ -191,7 +191,7 @@ class VoiceCall(Base):
     answers: Mapped[dict] = mapped_column(JSONColumn, default=dict)
     """Per-question result, including how long the customer took to answer.
 
-    Hesitation before the 'were you told not to tell your bank' question is signal in
+    Hesitation before the 'keep this payment from your bank' question is signal in
     itself, and response timing works identically in every language."""
 
     duration_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
