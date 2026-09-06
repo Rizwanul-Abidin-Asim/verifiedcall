@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.schemas import TransactionContext
 from app.camara.call_forwarding import check_call_forwarding
 from app.camara.device_status import check_device_status
-from app.camara.location_verification import CITY_CENTRES, verify_location
+from app.camara.location_verification import centre_for, verify_location
 from app.camara.models import SignalResult
 from app.camara.sim_swap import check_sim_swap
 from app.services.audit import record_signal_call
@@ -150,13 +150,10 @@ async def verify_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
     # Prefer where the handset says it is. Asking the network "is the SIM within 50km
     # of the point the browser reported" compares two independent sources; falling back
     # to a city centre only compares the network against an assumption.
-    if deps.device_latitude is not None and deps.device_longitude is not None:
-        latitude, longitude = deps.device_latitude, deps.device_longitude
-        against = "the location the device reported"
-    else:
-        latitude, longitude = CITY_CENTRES.get(deps.expected_city,
-                                               CITY_CENTRES["AE-DXB"])
-        against = "the expected location"
+    latitude, longitude = centre_for(deps.device_latitude, deps.device_longitude,
+                                     deps.expected_city)
+    against = ("the location the device reported"
+               if deps.device_latitude is not None else "the expected location")
     payload = {
         "device": {"phoneNumber": deps.context.signal_msisdn},
         "area": {"areaType": "CIRCLE",

@@ -19,6 +19,28 @@ CITY_CENTRES = {
 }
 
 
+def centre_for(
+    device_latitude: float | None,
+    device_longitude: float | None,
+    expected_city: str,
+) -> tuple[float, float]:
+    """Where to aim the check.
+
+    The handset's own position when we have it, so the question becomes whether the
+    network agrees with the phone. A city centre otherwise, which only compares the
+    network against an assumption of ours.
+
+    This lives in one function because three call sites decide it: the agent tool, the
+    deterministic fallback, and the guard that insists on evidence before declining.
+    The first was taught about device position and the other two were not, so a payment
+    was checked against Dubai while the phone reported Sharjah. One place, or it drifts
+    again.
+    """
+    if device_latitude is not None and device_longitude is not None:
+        return device_latitude, device_longitude
+    return CITY_CENTRES.get(expected_city, CITY_CENTRES["AE-DXB"])
+
+
 @with_fallback("location_verification")
 async def verify_location(
     phone_number: str,
