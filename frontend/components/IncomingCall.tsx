@@ -102,6 +102,27 @@ export function IncomingCall({
     setError(null);
 
     try {
+      // Claim the microphone first, before anything that awaits.
+      //
+      // A browser only grants the microphone while a user gesture is still active, and
+      // on mobile that activation does not survive an await. Fetching the session first
+      // spent it, so by the time the SDK asked for audio the tap had expired: the call
+      // connected with no microphone track, the assistant heard silence, and Vapi ended
+      // it with error-assistant-did-not-receive-customer-audio. It looked like a crash
+      // and was really an ordering bug.
+      //
+      // Asking here, synchronously in the tap, grants permission for the origin. The
+      // track is released immediately because the SDK opens its own; two handles on one
+      // microphone is a good way to get silence on Android.
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error(
+          "This browser will not share a microphone on an insecure page. Open the " +
+          "https link rather than an IP address."
+        );
+      }
+      const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
+      permission.getTracks().forEach((track) => track.stop());
+
       const session = await getWebSession(transactionId);
       const client = new Vapi(session.public_key);
       vapi.current = client;
@@ -114,7 +135,7 @@ export function IncomingCall({
       client.on("speech-start", () => setSpeaking(true));
       client.on("speech-end", () => setSpeaking(false));
       client.on("error", (err: unknown) => {
-        setError(err instanceof Error ? err.message : "The call dropped.");
+        setError(explain(err));
         setStage("error");
       });
       client.on("message", (message: Record<string, unknown>) => {
@@ -138,13 +159,7 @@ export function IncomingCall({
       }
       await reportWebCallStarted(transactionId, call.id);
     } catch (err) {
-      const message =
-        err instanceof DOMException && err.name === "NotAllowedError"
-          ? "We need microphone access to speak with you. Allow it and tap Answer again."
-          : err instanceof Error
-            ? err.message
-            : "We could not connect the call.";
-      setError(message);
+      setError(explain(err));
       setStage("error");
       vapi.current?.stop();
       vapi.current = null;
@@ -258,6 +273,45 @@ export function IncomingCall({
     </div>
   );
 }
+
+/**
+ * Turn a provider error into something the person holding the phone can act on.
+ *
+ * The raw messages are written for whoever wrote the SDK. "Meeting ended due to
+ * ejection: Meeting has ended" is what the customer saw when the real problem was that
+ * their microphone never opened, which is both fixable and their decision to make.
+ */
+function explain(err: unknown): string {
+  if (err instanceof DOMException) {
+    if (err.name === "NotAllowedError" || err.name === "SecurityError") {
+      return "We need your microphone to hear your answers. Allow it in your browser, "
+        + "then tap Answer again.";
+    }
+    if (err.name === "NotFoundError" || err.name === "OverconstrainedError") {
+      return "No microphone was found on this device.";
+    }
+    if (err.name === "NotReadableError" || err.name === "AbortError") {
+      return "Another app is using your microphone. Close it and tap Answer again.";
+    }
+  }
+
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+
+  // Vapi ends a call it cannot hear. The wording below is the provider's; the
+  // explanation is ours, because theirs does not say what to do about it.
+  if (/did-not-receive-customer-audio|no audio/i.test(raw)) {
+    return "We could not hear you, so the call ended. Check your microphone is not "
+      + "muted, then tap Answer again.";
+  }
+  if (/ejection|meeting has ended/i.test(raw)) {
+    return "The call ended before we could finish. Tap Answer to try again.";
+  }
+  if (/network|failed to fetch|load failed/i.test(raw)) {
+    return "We lost the connection. Check your internet and tap Answer again.";
+  }
+  return raw || "We could not connect the call.";
+}
+
 
 function formatClock(total: number): string {
   const m = Math.floor(total / 60);
