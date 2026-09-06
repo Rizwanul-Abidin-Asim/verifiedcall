@@ -559,3 +559,24 @@ async def test_the_opening_carries_the_amount_in_words():
         SCRIPTS[Language.EN], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
     assert "forty-two thousand" in assistant["firstMessage"]
     assert "42,000" not in assistant["firstMessage"]
+
+
+@pytest.mark.parametrize("language", list(Language))
+async def test_the_extraction_prompt_carries_the_transcript(language):
+    """Without the template variables the extractor reads nothing and returns null.
+
+    That happened on a real call: the customer answered all three questions, the
+    provider returned analysis.structuredData as null, and the payment resolved as
+    "no answer". The failure is silent, which is why it is pinned here.
+    """
+    plan = build_assistant(
+        SCRIPTS[language], "forty-two thousand", "AED", "Direct transfer",
+    )["analysisPlan"]["structuredDataPlan"]
+
+    prompt = " ".join(m["content"] for m in plan["messages"])
+    assert "{{schema}}" in prompt, "the extractor was not given the schema"
+    assert "{{transcript}}" in prompt, "the extractor was not given the transcript"
+
+    assert plan["enabled"] is True
+    # The 5 second default drops answers when the model is still thinking.
+    assert plan["timeoutSeconds"] >= 20
