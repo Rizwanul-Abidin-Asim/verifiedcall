@@ -55,3 +55,34 @@ def test_the_fallback_centres_are_real_coordinates(city):
     lat, lon = CITY_CENTRES[city]
     assert -90 <= lat <= 90
     assert -180 <= lon <= 180
+
+
+def test_every_caller_aims_at_the_device_when_it_reported_one():
+    """Three places choose the centre, and only one of them knew about the device.
+
+    A payment was checked against Dubai while the phone had reported Sharjah, because
+    the agent tool was taught about device position and the deterministic fallback and
+    the decline guard were not. They now share one function; this asserts nothing has
+    gone back to reading the city table directly.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders = [
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if path.name != "location_verification.py" and "CITY_CENTRES" in path.read_text(
+            encoding="utf-8")
+    ]
+    assert offenders == [], f"these pick a centre without centre_for(): {offenders}"
+
+
+def test_centre_for_prefers_the_device_and_falls_back_to_the_city():
+    from app.camara.location_verification import CITY_CENTRES, centre_for
+
+    assert centre_for(25.3463, 55.4209, "AE-DXB") == (25.3463, 55.4209)
+    assert centre_for(None, None, "AE-DXB") == CITY_CENTRES["AE-DXB"]
+    assert centre_for(None, None, "nonsense") == CITY_CENTRES["AE-DXB"]
+    # Half a position is not a position.
+    assert centre_for(25.3463, None, "AE-DXB") == CITY_CENTRES["AE-DXB"]
+    assert centre_for(None, 55.4209, "AE-DXB") == CITY_CENTRES["AE-DXB"]

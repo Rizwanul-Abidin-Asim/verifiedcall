@@ -519,3 +519,212 @@ button.pay:disabled { background: var(--faint); cursor: not-allowed; }
   .callbtn.is-answer > svg,
   .callscreen-wave.is-speaking span { animation: none; }
 }
+
+/* ------------------------------------------------------------- mobile bank app
+
+   The customer's side. Built for a phone held in the hand and centred on a laptop,
+   because the phone is where a payment actually gets made and where the demo is
+   filmed.                                                                        */
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+  background: var(--ground);
+}
+
+.phone {
+  width: 100%;
+  max-width: 26rem;
+  padding: 1rem 1rem 3rem;
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+}
+
+.app-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.25rem 0.15rem;
+}
+
+.app-bank {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.app-greet { margin: 0.15rem 0 0; font-size: 1.05rem; font-weight: 600; }
+
+.app-avatar {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.acct {
+  padding: 1.15rem 1.25rem 1.35rem;
+  border-radius: 1rem;
+  color: #fff;
+  background: linear-gradient(135deg, #247eeb 0%, #1a4fb4 100%);
+  box-shadow: var(--shadow);
+}
+
+.acct-label {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+.acct-number {
+  margin: 0.35rem 0 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.acct-balance { margin: 0; font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; }
+
+/* Location. Three states, each saying what it means for the payment rather than
+   just whether a permission was granted. */
+.loc {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--surface);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.loc svg { flex: none; color: var(--faint); }
+.loc button {
+  flex: none;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  background: var(--ground);
+  color: var(--ink);
+  border-radius: 0.45rem;
+  padding: 0.3rem 0.6rem;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.loc.is-on { border-color: #bfe6d2; background: var(--ok-wash); color: #0d5c38; }
+.loc.is-on svg { color: var(--ok); }
+.loc.is-off { border-color: #f2d9a8; background: var(--hold-wash); color: #7a4d05; }
+.loc.is-off svg { color: var(--hold); }
+
+.pay-card,
+.recent,
+.demo,
+.result {
+  padding: 1.1rem 1.15rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.pay-card h2 { margin: 0 0 0.85rem; font-size: 1.05rem; }
+
+.pay-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.pay-row:last-of-type { border-bottom: 0; }
+.pay-row > span { color: var(--muted); }
+.pay-row > strong { text-align: right; font-weight: 600; }
+.pay-amount { font-size: 1.05rem; }
+
+.pay-row select {
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.recent h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+
+.recent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.recent-row:last-child { border-bottom: 0; }
+.recent-name { margin: 0; font-size: 0.88rem; font-weight: 500; }
+.recent-when { margin: 0.1rem 0 0; font-size: 0.75rem; color: var(--faint); }
+.recent-in  { margin: 0; font-weight: 600; color: var(--ok); font-size: 0.9rem; }
+.recent-out { margin: 0; font-weight: 600; font-size: 0.9rem; }
+
+.answers { margin-top: 0.85rem; display: grid; gap: 0.35rem; }
+
+.answer-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.85rem;
+}
+
+.answer-row > span { color: var(--muted); }
+.answer-row em { color: var(--hold); font-style: normal; font-weight: 600; }
+
+/* The demo controls admit to being demo controls rather than dressing up as part of
+   the product. */
+.demo { background: transparent; box-shadow: none; border-style: dashed; }
+
+.demo-toggle {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.demo-body { margin-top: 0.75rem; display: grid; gap: 0.55rem; }
+
+.demo-choice {
+  display: flex;
+  gap: 0.55rem;
+  align-items: start;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.demo-choice input { margin-top: 0.25rem; flex: none; }
+.demo-choice strong { display: block; font-weight: 600; }
+.demo-choice em { display: block; color: var(--faint); font-style: normal; font-size: 0.78rem; }

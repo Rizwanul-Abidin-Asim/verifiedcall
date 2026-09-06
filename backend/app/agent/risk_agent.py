@@ -36,7 +36,7 @@ from app.agent.scoring import (
 from app.agent.tools import ALL_TOOLS, AgentDeps
 from app.camara.call_forwarding import check_call_forwarding
 from app.camara.device_status import check_device_status
-from app.camara.location_verification import CITY_CENTRES, verify_location
+from app.camara.location_verification import centre_for, verify_location
 from app.camara.sim_swap import check_sim_swap
 from app.config import settings
 from app.db.models import DecisionOutcome
@@ -113,7 +113,8 @@ async def _pull_missing_signals(deps: AgentDeps) -> None:
     anything had been collected, which left the fallback deciding on partial evidence.
     """
     msisdn = deps.context.signal_msisdn
-    latitude, longitude = CITY_CENTRES.get(deps.expected_city, CITY_CENTRES["AE-DXB"])
+    latitude, longitude = centre_for(deps.device_latitude, deps.device_longitude,
+                                     deps.expected_city)
     already = {s.api_name for s in deps.collected}
 
     wanted = [
@@ -157,7 +158,8 @@ async def _ensure_location_before_acting(deps: AgentDeps) -> bool:
     if any(s.api_name == "location_verification" for s in deps.collected):
         return False
 
-    latitude, longitude = CITY_CENTRES.get(deps.expected_city, CITY_CENTRES["AE-DXB"])
+    latitude, longitude = centre_for(deps.device_latitude, deps.device_longitude,
+                                     deps.expected_city)
     log.info("agent.mandatory_evidence pulling location check; score=%d", score)
     signal = await verify_location(deps.context.signal_msisdn, latitude, longitude)
     await deps.capture(signal, {
