@@ -166,19 +166,32 @@ export default function Checkout() {
       }
 
       // Held for a call. Watch it until it resolves, and give up rather than hang.
+      //
+      // The ceiling used to be forty seconds, which was shorter than a real
+      // conversation. A call that ran sixty-six seconds finished correctly on the
+      // server and the customer never saw the result: polling had already stopped, so
+      // the screen sat on "checking what you told us" forever. The call itself is
+      // capped at two minutes, and the provider still has to transcribe and extract
+      // afterwards, so the watcher has to outlast all of that.
       setPhase("calling");
       let attempts = 0;
+      const giveUpAfter = 300; // five minutes at one second apart
       polling.current = setInterval(async () => {
         attempts += 1;
         try {
           const v = await getVoice(result.transaction_id);
           setVoice(v as VoiceState);
-          if (v.status === "completed" || v.status === "failed" || attempts > 40) {
+          if (v.status === "completed" || v.status === "failed") {
+            stopPolling();
+            setPhase("done");
+          } else if (attempts > giveUpAfter) {
+            // Stop watching, but say so rather than implying an answer. The payment is
+            // held either way, which is the safe state.
             stopPolling();
             setPhase("done");
           }
         } catch {
-          if (attempts > 40) {
+          if (attempts > giveUpAfter) {
             stopPolling();
             setPhase("done");
           }

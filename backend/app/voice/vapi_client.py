@@ -121,15 +121,38 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
             "structuredDataPlan": {
                 "enabled": True,
                 "schema": answer_schema,
-                "messages": [{
-                    "role": "system",
-                    "content": (
-                        "Read the transcript and record how the customer answered each "
-                        "question. Use exactly yes, no, or unclear. Use unclear when they "
-                        "did not answer, changed the subject, or gave an answer that is "
-                        "not a yes or a no. Do not infer an answer they did not give."
-                    ),
-                }],
+                # {{schema}} and {{transcript}} are template variables the provider
+                # fills in. Overriding these messages without them, which is what we did
+                # at first, asks the extractor to read a transcript it was never given:
+                # analysis.structuredData came back null on a real call where the
+                # customer had answered every question, and the payment resolved as
+                # "no answer". The wording below is ours; the two variables are not
+                # optional.
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You extract how a customer answered a bank security check. "
+                            "Return only JSON matching this schema:\n{{schema}}\n\n"
+                            "Use exactly yes, no, or unclear for each question. Use "
+                            "unclear when they did not answer, changed the subject, said "
+                            "something that is not a yes or a no, or when the transcript "
+                            "is too garbled to be sure. Never infer an answer they did "
+                            "not give: a wrong yes blocks a real payment and a wrong no "
+                            "releases a fraudulent one."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Transcript:\n\n{{transcript}}\n\n"
+                            "The call ended because: {{endedReason}}"
+                        ),
+                    },
+                ],
+                # The default is 5 seconds. A call that ends while the model is still
+                # thinking loses its answers entirely, and we would rather wait.
+                "timeoutSeconds": 30,
             },
         },
         "model": {
