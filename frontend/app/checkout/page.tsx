@@ -1,15 +1,12 @@
 "use client";
 
 /**
- * The customer's side, as a mobile banking app.
+ * The customer's side: a mobile banking app at the moment of sending money.
  *
- * It was a form with a scenario dropdown, which demonstrated the backend but did not
- * look like anything a person uses. The payment now happens where a real one does: an
- * account screen, a transfer, a confirmation, and then the security call.
- *
- * The demo scenarios still exist because the four network profiles are the point, but
- * they sit in a panel that reads as a demo control rather than pretending to be part of
- * the product.
+ * Home, then send, then a review sheet, then one deliberate slide to confirm. If the
+ * network signals say something is wrong, the screen becomes the security call. The
+ * demo scenarios still exist because the four network profiles are the point, but they
+ * live in a drawer that admits to being a demo control.
  *
  * Reliability matters more than polish. Every failure has a written state and nothing
  * hangs: if the backend is unreachable the customer is told plainly that nothing has
@@ -18,68 +15,50 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { AmountPad, formatAmount } from "@/components/bank/AmountPad";
+import { SlideToSend } from "@/components/bank/SlideToSend";
 import { IncomingCall } from "@/components/IncomingCall";
 import { useDeviceLocation } from "@/components/useDeviceLocation";
-import {
-  ApiError,
-  evaluatePayment,
-  getVoice,
-  money,
-  type Outcome,
-} from "../../lib/api";
+import { ApiError, evaluatePayment, getVoice, type Outcome } from "../../lib/api";
 
 /** Signal numbers come from the measured sandbox matrix in docs/camara-findings.md. */
-const SCENARIOS = [
+const PROFILES = [
   {
     id: "clean",
-    label: "Routine payment, known payee",
-    payee: "Carrefour Mall of the Emirates",
-    amount: "240.00",
-    newPayee: false,
+    label: "All clear",
     signal: "+99999991001",
-    hour: 14,
-    note: "Everything is normal. The agent should not spend time on network checks.",
+    note: "Every network check comes back clean.",
   },
   {
     id: "elsewhere",
-    label: "Large transfer, phone is elsewhere",
-    payee: "Direct transfer",
-    amount: "18500.00",
-    newPayee: true,
+    label: "Phone is somewhere else",
     signal: "+99999991000",
-    hour: 23,
-    note: "Reads as somebody else operating the account, so calling would not reach the customer.",
+    note: "SIM swapped, calls forwarded, and the phone is not where this payment is.",
   },
   {
     id: "coerced",
-    label: "Large transfer, phone is right here",
-    payee: "Direct transfer to a 'safe account'",
-    amount: "42000.00",
-    newPayee: true,
+    label: "Phone is right here",
     signal: "+99999991004",
-    hour: 23,
-    note: "The headline case. The customer really is doing this, so we call them.",
+    note: "Same bad signals, but the phone is exactly where the payment claims. The headline case.",
   },
   {
     id: "partial",
-    label: "Moderate transfer, partial location match",
-    payee: "Al Ansari Exchange",
-    amount: "6300.00",
-    newPayee: true,
+    label: "Partial location match",
     signal: "+99999991003",
-    hour: 23,
     note: "Not enough to decline, too much to wave through.",
   },
   {
     id: "outage",
-    label: "Network outage on every check",
-    payee: "Direct transfer",
-    amount: "9000.00",
-    newPayee: true,
+    label: "Network outage",
     signal: "+99999990500",
-    hour: 23,
-    note: "Proves the system degrades to cached data and says so, rather than falling over.",
+    note: "Every network call fails. Proves the fallback and says so.",
   },
+] as const;
+
+const PAYEES = [
+  { id: "ahmed", name: "Ahmed Karim", iban: "AE45 0260 0010 1234 5678 901", initials: "AK", saved: true },
+  { id: "mum", name: "Mum", iban: "AE22 0330 0000 0012 3456 789", initials: "M", saved: true },
+  { id: "dewa", name: "DEWA", iban: "AE07 0331 2345 6789 0123 456", initials: "D", saved: true },
 ] as const;
 
 const LANGUAGES = [
@@ -90,24 +69,22 @@ const LANGUAGES = [
 ];
 
 const RECENT = [
-  { name: "Salary — Emirates Holdings", when: "Today", amount: "+18,400.00" },
-  { name: "DEWA", when: "Yesterday", amount: "-612.35" },
-  { name: "Talabat", when: "2 Sep", amount: "-88.00" },
-  { name: "Emaar — rent", when: "1 Sep", amount: "-7,500.00" },
+  { name: "Salary · Emirates Holdings", when: "Today", amount: "+18,400.00", in: true },
+  { name: "DEWA", when: "Yesterday", amount: "−612.35", in: false },
+  { name: "Talabat", when: "2 Sep", amount: "−88.00", in: false },
+  { name: "Emaar · rent", when: "1 Sep", amount: "−7,500.00", in: false },
 ];
 
 const BALANCE = 96420.55;
 
+type Screen = "home" | "send" | "review" | "result";
 type Phase = "idle" | "deciding" | "calling" | "done" | "error";
 
 interface Decision {
   transaction_id: string;
   outcome: Outcome;
   risk_score: number;
-  summary: string;
-  signals_pulled: string[];
   latency_ms: number;
-  agent_mode: string;
 }
 
 interface VoiceState {
@@ -120,23 +97,40 @@ interface VoiceState {
 }
 
 const QUESTION_LABEL: Record<string, string> = {
-  others_present: "Is anyone with you right now?",
-  asked_to_pay: "Did someone ask you to make this payment?",
-  told_to_keep_secret: "Were you told not to tell your bank?",
+  others_present: "Is anyone with you?",
+  asked_to_pay: "Did someone ask you to pay?",
+  told_to_keep_secret: "Told not to tell your bank?",
 };
 
 export default function BankApp() {
-  const [scenarioId, setScenarioId] = useState<string>(SCENARIOS[2].id);
+  const [screen, setScreen] = useState<Screen>("home");
+  const [payeeId, setPayeeId] = useState<string>("ahmed");
+  const [newName, setNewName] = useState("");
+  const [newIban, setNewIban] = useState("");
+  const [amount, setAmount] = useState("");
   const [language, setLanguage] = useState("en");
+  const [profileId, setProfileId] = useState<string>("coerced");
+  const [drawer, setDrawer] = useState(false);
+
   const [phase, setPhase] = useState<Phase>("idle");
   const [decision, setDecision] = useState<Decision | null>(null);
   const [voice, setVoice] = useState<VoiceState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showDemo, setShowDemo] = useState(false);
   const polling = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const location = useDeviceLocation();
-  const scenario = SCENARIOS.find((s) => s.id === scenarioId) ?? SCENARIOS[0];
+  const profile = PROFILES.find((p) => p.id === profileId) ?? PROFILES[2];
+  const isNewPayee = payeeId === "new";
+  const payee = isNewPayee
+    ? { name: newName.trim() || "New payee", iban: newIban.trim(), initials: "+" }
+    : PAYEES.find((p) => p.id === payeeId) ?? PAYEES[0];
+
+  const amountNumber = Number(amount || "0");
+  const amountOk = amountNumber > 0 && amountNumber <= BALANCE;
+  const payeeOk = !isNewPayee || (newName.trim().length > 1 && newIban.replace(/\s/g, "").length >= 15);
+
+  const locationAnswered =
+    location.stage === "granted" || location.stage === "denied" || location.stage === "unavailable";
 
   const stopPolling = useCallback(() => {
     if (polling.current) {
@@ -144,21 +138,31 @@ export default function BankApp() {
       polling.current = null;
     }
   }, []);
-
   useEffect(() => stopPolling, [stopPolling]);
 
-  // The payment waits for an answer about location, not for permission to be granted.
-  // Refusing is a valid answer that the backend scores; being asked and not having
-  // replied yet is not.
-  const locationAnswered =
-    location.stage === "granted" ||
-    location.stage === "denied" ||
-    location.stage === "unavailable";
+  // The demo drawer can stage the headline case in one tap, but everything it fills in
+  // stays editable. A judge who types their own amount gets a real decision on it.
+  const stageHeadline = () => {
+    setPayeeId("new");
+    setNewName("Safe account");
+    setNewIban("AE90 0999 0000 0000 0000 001");
+    setAmount("42000");
+    setProfileId("coerced");
+    setDrawer(false);
+    setScreen("send");
+  };
 
-  const busy = phase === "deciding" || phase === "calling";
-  const canPay = locationAnswered && !busy;
+  const reset = () => {
+    stopPolling();
+    setPhase("idle");
+    setDecision(null);
+    setVoice(null);
+    setError(null);
+    setScreen("home");
+    setAmount("");
+  };
 
-  async function pay() {
+  const send = useCallback(async () => {
     stopPolling();
     setPhase("deciding");
     setDecision(null);
@@ -167,15 +171,15 @@ export default function BankApp() {
 
     try {
       const result = (await evaluatePayment({
-        amount: scenario.amount,
+        amount: amountNumber.toFixed(2),
         currency: "AED",
-        merchant_name: scenario.payee,
-        beneficiary_id: `BEN-${scenario.id.toUpperCase()}`,
-        is_new_beneficiary: scenario.newPayee,
+        merchant_name: payee.name,
+        beneficiary_id: isNewPayee ? `NEW-${payee.iban.replace(/\s/g, "")}` : `SAVED-${payeeId}`,
+        is_new_beneficiary: isNewPayee,
         customer_msisdn: "+971500000000",
-        signal_msisdn: scenario.signal,
+        signal_msisdn: profile.signal,
         customer_locale: language,
-        local_hour: scenario.hour,
+        local_hour: new Date().getHours(),
         device_latitude: location.latitude,
         device_longitude: location.longitude,
         device_location_accuracy_m: location.accuracy,
@@ -186,39 +190,35 @@ export default function BankApp() {
 
       if (result.outcome !== "intervene") {
         setPhase("done");
+        setScreen("result");
         return;
       }
 
-      // Held for a call. The watcher has to outlast the conversation, which is capped
-      // at two minutes, plus the transcription and extraction that happen after it.
       setPhase("calling");
       let attempts = 0;
-      const giveUpAfter = 300;
       polling.current = setInterval(async () => {
         attempts += 1;
         try {
           const v = (await getVoice(result.transaction_id)) as VoiceState;
           setVoice(v);
-          if (v.status === "completed" || v.status === "failed" || attempts > giveUpAfter) {
+          if (v.status === "completed" || v.status === "failed" || attempts > 300) {
             stopPolling();
             setPhase("done");
+            setScreen("result");
           }
         } catch {
-          if (attempts > giveUpAfter) {
+          if (attempts > 300) {
             stopPolling();
             setPhase("done");
+            setScreen("result");
           }
         }
       }, 1000);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : "Something went wrong. Nothing has been charged."
-      );
+      setError(err instanceof ApiError ? err.message : "We could not reach the bank. Nothing has been sent.");
       setPhase("error");
     }
-  }
+  }, [amountNumber, payee, isNewPayee, payeeId, profile.signal, language, location, stopPolling]);
 
   const callIsUp =
     decision?.outcome === "intervene" &&
@@ -227,308 +227,364 @@ export default function BankApp() {
     voice.status !== "failed";
 
   return (
-    <main className="app">
-      <div className="phone">
-        <header className="app-bar">
-          <div>
-            <p className="app-bank">VerifiedCall Bank</p>
-            <p className="app-greet">Good evening, Rizwanul</p>
-          </div>
-          <span className="app-avatar">RA</span>
-        </header>
-
-        <section className="acct">
-          <p className="acct-label">Current account</p>
-          <p className="acct-number">AE07 0331 •••• •••• 4429</p>
-          <p className="acct-balance">{money(BALANCE, "AED")}</p>
-        </section>
-
-        <LocationBadge location={location} />
-
-        {phase !== "done" && phase !== "error" && (
-          <section className="pay-card">
-            <h2>Send money</h2>
-
-            <div className="pay-row">
-              <span>To</span>
-              <strong>{scenario.payee}</strong>
+    <main className="bk">
+      <div className="bk-phone" data-screen={screen}>
+        {/* ------------------------------------------------------------ home */}
+        <section className="bk-screen bk-home" aria-hidden={screen !== "home"}>
+          <header className="bk-bar">
+            <div>
+              <p className="bk-eyebrow">VerifiedCall Bank</p>
+              <h1 className="bk-greet">Good evening, Rizwanul</h1>
             </div>
-            <div className="pay-row">
-              <span>Amount</span>
-              <strong className="pay-amount">{money(scenario.amount, "AED")}</strong>
-            </div>
-            <div className="pay-row">
-              <span>They speak</span>
-              <select
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                disabled={busy}
-                aria-label="Customer language"
-              >
-                {LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <span className="bk-avatar">RA</span>
+          </header>
 
-            <button className="pay" onClick={pay} disabled={!canPay}>
-              {phase === "deciding" ? (
-                <>
-                  <span className="spinner" /> Checking this payment…
-                </>
-              ) : phase === "calling" ? (
-                <>
-                  <span className="spinner" /> Security check in progress…
-                </>
-              ) : !locationAnswered ? (
-                "Confirm your location to continue"
-              ) : (
-                `Send ${money(scenario.amount, "AED")}`
-              )}
-            </button>
-
-            {!locationAnswered && (
-              <p className="hint">
-                We check where your phone is before releasing a transfer. You can
-                decline; we will note that we could not check and decide anyway.
-              </p>
-            )}
-          </section>
-        )}
-
-        {phase === "error" && (
-          <section className="result" data-o="error">
-            <p className="eyebrow" style={{ color: "var(--stop)" }}>
-              Payment not completed
+          <div className="bk-card">
+            <span className="bk-card-sheen" aria-hidden="true" />
+            <p className="bk-card-label">Current account</p>
+            <p className="bk-card-iban">AE07 0331 •••• •••• 4429</p>
+            <p className="bk-card-balance">
+              <span className="bk-card-ccy">AED</span>
+              {formatAmount(BALANCE.toFixed(2))}
             </p>
-            <h2>We could not check this payment</h2>
-            <p>{error}</p>
-            <button className="pay" onClick={() => setPhase("idle")}>
-              Back
+          </div>
+
+          <div className="bk-actions">
+            <button className="bk-action is-primary" onClick={() => setScreen("send")}>
+              <ArrowIcon />
+              <span>Send</span>
             </button>
-          </section>
-        )}
+            <button className="bk-action" disabled>
+              <RequestIcon />
+              <span>Request</span>
+            </button>
+            <button className="bk-action" disabled>
+              <CardIcon />
+              <span>Cards</span>
+            </button>
+          </div>
 
-        {decision && phase !== "error" && (
-          <CustomerResult
-            decision={decision}
-            voice={voice}
-            calling={phase === "calling"}
-            onDone={() => {
-              setPhase("idle");
-              setDecision(null);
-              setVoice(null);
-            }}
-          />
-        )}
-
-        <section className="recent">
-          <h3>Recent activity</h3>
-          {RECENT.map((r) => (
-            <div key={r.name} className="recent-row">
-              <div>
-                <p className="recent-name">{r.name}</p>
-                <p className="recent-when">{r.when}</p>
+          <div className="bk-list">
+            <h2 className="bk-h2">Recent</h2>
+            {RECENT.map((r) => (
+              <div key={r.name} className="bk-row">
+                <span className="bk-row-dot" data-in={r.in} />
+                <div className="bk-row-main">
+                  <p className="bk-row-name">{r.name}</p>
+                  <p className="bk-row-when">{r.when}</p>
+                </div>
+                <p className={`bk-row-amt${r.in ? " is-in" : ""}`}>{r.amount}</p>
               </div>
-              <p className={r.amount.startsWith("+") ? "recent-in" : "recent-out"}>
-                {r.amount}
-              </p>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          <div className="bk-drawer">
+            <button className="bk-drawer-toggle" onClick={() => setDrawer((v) => !v)}>
+              {drawer ? "Hide demo controls" : "Demo controls"}
+            </button>
+            {drawer && (
+              <div className="bk-drawer-body">
+                <button className="bk-stage" onClick={stageHeadline}>
+                  Stage the headline case
+                  <small>42,000 AED to a new "safe account", phone right here</small>
+                </button>
+                <p className="bk-drawer-label">Network profile for the next payment</p>
+                {PROFILES.map((p) => (
+                  <label key={p.id} className="bk-choice">
+                    <input
+                      type="radio"
+                      name="profile"
+                      checked={p.id === profileId}
+                      onChange={() => setProfileId(p.id)}
+                    />
+                    <span>
+                      <strong>{p.label}</strong>
+                      <em>{p.note}</em>
+                    </span>
+                  </label>
+                ))}
+                <a className="bk-drawer-link" href="/dashboard">
+                  Open the fraud-ops console →
+                </a>
+              </div>
+            )}
+          </div>
         </section>
 
-        <section className="demo">
-          <button className="demo-toggle" onClick={() => setShowDemo((v) => !v)}>
-            {showDemo ? "Hide" : "Show"} demo controls
-          </button>
-          {showDemo && (
-            <div className="demo-body">
-              <p className="hint">
-                Each scenario uses a different sandbox number, so the network returns a
-                different signal profile. Numbers and behaviour are in
-                docs/camara-findings.md.
-              </p>
-              {SCENARIOS.map((s) => (
-                <label key={s.id} className="demo-choice">
-                  <input
-                    type="radio"
-                    name="scenario"
-                    checked={s.id === scenarioId}
-                    onChange={() => setScenarioId(s.id)}
-                    disabled={busy}
-                  />
-                  <span>
-                    <strong>{s.label}</strong>
-                    <em>{s.note}</em>
-                  </span>
-                </label>
-              ))}
+        {/* ------------------------------------------------------------ send */}
+        <section className="bk-screen bk-send" aria-hidden={screen !== "send"}>
+          <header className="bk-bar">
+            <button className="bk-back" onClick={() => setScreen("home")} aria-label="Back">
+              <BackIcon />
+            </button>
+            <h1 className="bk-title">Send money</h1>
+            <span className="bk-bar-spacer" />
+          </header>
+
+          <div className="bk-payees" role="radiogroup" aria-label="Payee">
+            {PAYEES.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={payeeId === p.id}
+                className={`bk-payee${payeeId === p.id ? " is-on" : ""}`}
+                onClick={() => setPayeeId(p.id)}
+              >
+                <span className="bk-payee-avatar">{p.initials}</span>
+                <span className="bk-payee-name">{p.name}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={isNewPayee}
+              className={`bk-payee is-new${isNewPayee ? " is-on" : ""}`}
+              onClick={() => setPayeeId("new")}
+            >
+              <span className="bk-payee-avatar">+</span>
+              <span className="bk-payee-name">New</span>
+            </button>
+          </div>
+
+          {isNewPayee && (
+            <div className="bk-fields">
+              <label className="bk-field">
+                <span>Name</span>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Who are you paying?"
+                  autoComplete="off"
+                />
+              </label>
+              <label className="bk-field">
+                <span>IBAN</span>
+                <input
+                  value={newIban}
+                  onChange={(e) => setNewIban(e.target.value.toUpperCase())}
+                  placeholder="AE00 0000 0000 0000 0000 000"
+                  autoComplete="off"
+                  inputMode="text"
+                  className="bk-mono"
+                />
+              </label>
+              <p className="bk-hint">A first payment to someone new is what we look at hardest.</p>
             </div>
+          )}
+
+          <AmountPad value={amount} onChange={setAmount} />
+
+          <button
+            className="bk-cta"
+            disabled={!amountOk || !payeeOk}
+            onClick={() => setScreen("review")}
+          >
+            {amountNumber > BALANCE ? "That's more than you have" : "Review"}
+          </button>
+        </section>
+
+        {/* ---------------------------------------------------------- result */}
+        <section className="bk-screen bk-result" aria-hidden={screen !== "result"}>
+          {decision && (
+            <Outcome
+              decision={decision}
+              voice={voice}
+              amount={amountNumber}
+              payee={payee.name}
+              onDone={reset}
+            />
           )}
         </section>
       </div>
 
-      {callIsUp && (
+      {/* ---------------------------------------------------------- review */}
+      {screen === "review" && (
+        <div className="bk-sheet-backdrop" onClick={() => phase === "idle" && setScreen("send")}>
+          <div className="bk-sheet" onClick={(e) => e.stopPropagation()}>
+            <span className="bk-sheet-handle" aria-hidden="true" />
+            <h2 className="bk-h2">Review</h2>
+
+            <div className="bk-review">
+              <div className="bk-review-row">
+                <span>To</span>
+                <strong>{payee.name}</strong>
+              </div>
+              <div className="bk-review-row">
+                <span>IBAN</span>
+                <strong className="bk-mono">{payee.iban || "—"}</strong>
+              </div>
+              <div className="bk-review-row is-amount">
+                <span>Amount</span>
+                <strong>
+                  <small>AED</small> {formatAmount(amountNumber.toFixed(2))}
+                </strong>
+              </div>
+              <div className="bk-review-row">
+                <span>They speak</span>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  disabled={phase !== "idle"}
+                  aria-label="Language for the security call"
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>{l.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <LocationLine location={location} />
+
+            {phase === "error" && <p className="bk-error">{error}</p>}
+
+            <SlideToSend
+              label={`Slide to send ${formatAmount(amountNumber.toFixed(2))} AED`}
+              disabled={!locationAnswered}
+              busy={phase === "deciding" || phase === "calling"}
+              onSend={send}
+            />
+            {!locationAnswered && (
+              <p className="bk-hint">Answer the location prompt above to unlock sending.</p>
+            )}
+            {phase === "calling" && (
+              <p className="bk-hint">Security check in progress. Answer the call to continue.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {callIsUp && decision && (
         <IncomingCall
           transactionId={decision.transaction_id}
-          amountLabel={money(scenario.amount, "AED")}
-          beneficiary={scenario.payee}
+          amountLabel={`${formatAmount(amountNumber.toFixed(2))} AED`}
+          beneficiary={payee.name}
         />
       )}
     </main>
   );
 }
 
-function LocationBadge({ location }: { location: ReturnType<typeof useDeviceLocation> }) {
+/* ------------------------------------------------------------------ pieces */
+
+function LocationLine({ location }: { location: ReturnType<typeof useDeviceLocation> }) {
   if (location.stage === "granted") {
-    const accuracy =
-      location.accuracy != null ? ` · accurate to ${Math.round(location.accuracy)}m` : "";
     return (
-      <div className="loc is-on">
+      <div className="bk-loc is-on">
         <PinIcon />
-        <span>
-          Location confirmed{accuracy}. We will check this against the mobile network.
-        </span>
+        <span>Location confirmed. We check this against the mobile network before sending.</span>
       </div>
     );
   }
-
   if (location.stage === "denied" || location.stage === "unavailable") {
     return (
-      <div className="loc is-off">
+      <div className="bk-loc is-off">
         <PinIcon />
-        <span>
-          {location.error} We will note that this check is missing and decide without it.
-        </span>
-        <button onClick={location.request}>Retry</button>
+        <span>{location.error} We'll note the check is missing and decide without it.</span>
+        <button type="button" onClick={location.request}>Retry</button>
       </div>
     );
   }
-
   return (
-    <div className="loc">
+    <div className="bk-loc">
       <PinIcon />
-      <span>
-        {location.stage === "asking"
-          ? "Finding your phone…"
-          : "Confirm where your phone is before you transfer."}
-      </span>
+      <span>{location.stage === "asking" ? "Finding your phone…" : "Confirm where your phone is."}</span>
       {location.stage !== "asking" && (
-        <button onClick={location.request}>Allow</button>
+        <button type="button" onClick={location.request}>Allow</button>
       )}
     </div>
   );
 }
 
-function PinIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="10" r="2.4" stroke="currentColor" strokeWidth="1.8" />
-    </svg>
-  );
-}
-
-function CustomerResult({
+function Outcome({
   decision,
   voice,
-  calling,
+  amount,
+  payee,
   onDone,
 }: {
   decision: Decision;
   voice: VoiceState | null;
-  calling: boolean;
+  amount: number;
+  payee: string;
   onDone: () => void;
 }) {
-  if (decision.outcome === "approve") {
-    return (
-      <section className="result" data-o="approve">
-        <p className="eyebrow">Sent</p>
-        <h2>Your transfer is on its way</h2>
-        <p>Checked in {(decision.latency_ms / 1000).toFixed(1)} seconds.</p>
-        <button className="pay" onClick={onDone}>
-          Done
-        </button>
-      </section>
-    );
-  }
+  const sent =
+    decision.outcome === "approve" || voice?.outcome === "confirmed_legitimate";
+  const stopped = decision.outcome === "decline" || voice?.outcome === "scam_detected";
+  const tone = sent ? "sent" : stopped ? "stopped" : "held";
 
-  if (decision.outcome === "decline") {
-    return (
-      <section className="result" data-o="decline">
-        <p className="eyebrow" style={{ color: "var(--stop)" }}>
-          Stopped
-        </p>
-        <h2>We have not sent this payment</h2>
-        <p>
-          Something about this transfer did not look right, and we could not reach you
-          on the number registered to this account. Nothing has left your balance.
-        </p>
-        <button className="pay" onClick={onDone}>
-          Done
-        </button>
-      </section>
-    );
-  }
+  const title = sent
+    ? "Sent"
+    : stopped
+      ? "We've stopped this payment"
+      : voice?.outcome === "no_answer"
+        ? "We couldn't reach you"
+        : "We're having someone look at this";
+
+  const body = sent
+    ? `${formatAmount(amount.toFixed(2))} AED is on its way to ${payee}.`
+    : decision.outcome === "decline"
+      ? "This transfer didn't look right and we couldn't reach you on the number registered to this account. Nothing has left your balance."
+      : voice?.outcome === "scam_detected"
+        ? "From what you told us, someone else was directing this payment. Your money has stayed where it is."
+        : voice?.outcome === "no_answer"
+          ? "Your payment is held rather than sent. Nothing has been charged."
+          : "Your answers weren't clear enough to release this automatically, so a person from our fraud team will review it. Nothing has been charged.";
 
   return (
-    <section className="result" data-o="intervene">
-      <p className="eyebrow" style={{ color: "var(--hold)" }}>
-        {calling ? "Security check" : "On hold"}
-      </p>
-      <h2>{calling ? "We need a word before this goes" : headline(voice)}</h2>
-      <p>{calling ? "Answer the call to continue." : body(voice)}</p>
+    <div className="bk-outcome" data-tone={tone}>
+      <span className="bk-outcome-icon" aria-hidden="true">
+        {sent ? <TickIcon /> : stopped ? <StopIcon /> : <HoldIcon />}
+      </span>
+      <h1 className="bk-outcome-title">{title}</h1>
+      <p className="bk-outcome-body">{body}</p>
 
       {voice && Object.keys(voice.answers ?? {}).length > 0 && (
-        <div className="answers">
-          {Object.entries(voice.answers).map(([key, answer]) => (
-            <div key={key} className="answer-row">
+        <div className="bk-answers">
+          {Object.entries(voice.answers).map(([key, a]) => (
+            <div key={key} className="bk-answer">
               <span>{QUESTION_LABEL[key] ?? key}</span>
               <strong>
-                {answer.reply}
-                {answer.hesitant && <em> · hesitated</em>}
+                {a.reply}
+                {a.hesitant && <em>hesitated</em>}
               </strong>
             </div>
           ))}
         </div>
       )}
 
-      {!calling && (
-        <button className="pay" onClick={onDone}>
-          Done
-        </button>
-      )}
-    </section>
+      <button className="bk-cta" onClick={onDone}>Done</button>
+    </div>
   );
 }
 
-function headline(voice: VoiceState | null): string {
-  if (!voice) return "We could not reach you";
-  if (voice.outcome === "confirmed_legitimate") return "Thank you. Your transfer is going through";
-  if (voice.outcome === "scam_detected") return "We have stopped this payment";
-  if (voice.outcome === "no_answer") return "We could not reach you";
-  return "We are having someone look at this";
-}
+/* ------------------------------------------------------------------- icons */
 
-function body(voice: VoiceState | null): string {
-  if (!voice) {
-    return "Your payment is on hold until we can speak to you. Nothing has been charged.";
-  }
-  switch (voice.outcome) {
-    case "confirmed_legitimate":
-      return "Everything you told us checked out.";
-    case "scam_detected":
-      return "From what you told us, someone else was directing this payment. Your money has stayed where it is.";
-    case "no_answer":
-      return "We could not reach you, so the payment is held rather than sent.";
-    default:
-      return "Your answers were not clear enough for us to release this automatically, so a person from our fraud team will review it. Nothing has been charged.";
-  }
+const stroke = { stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
+function ArrowIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m0 0-6-6m6 6-6 6" {...stroke} /></svg>;
+}
+function BackIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5m0 0 6-6m-6 6 6 6" {...stroke} /></svg>;
+}
+function RequestIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14m0 0-6-6m6 6 6-6" {...stroke} /></svg>;
+}
+function CardIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2" {...stroke} /><path d="M3 10h18" {...stroke} /></svg>;
+}
+function PinIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21s7-5.5 7-11a7 7 0 1 0-14 0c0 5.5 7 11 7 11Z" {...stroke} /><circle cx="12" cy="10" r="2.4" {...stroke} /></svg>;
+}
+function TickIcon() {
+  return <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path className="bk-draw" d="m5 12.5 4.5 4.5L19 7" {...stroke} strokeWidth="2.6" /></svg>;
+}
+function StopIcon() {
+  return <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path className="bk-draw" d="M6 6l12 12M18 6 6 18" {...stroke} strokeWidth="2.6" /></svg>;
+}
+function HoldIcon() {
+  return <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" {...stroke} strokeWidth="2.2" className="bk-draw" /><path d="M12 7v5l3 2" {...stroke} strokeWidth="2.2" /></svg>;
 }
