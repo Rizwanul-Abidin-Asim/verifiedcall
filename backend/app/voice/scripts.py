@@ -82,8 +82,7 @@ _EN = Script(
     opening=(
         "Hello. This is an automated security check from your bank. "
         "A payment of {amount} {currency} to {beneficiary} is on hold. "
-        "I need to ask you three short questions. You can answer by speaking, "
-        "or by pressing 1 for yes and 2 for no."
+        "I need to ask you three short questions."
     ),
     questions=[
         Question(key="others_present",
@@ -111,8 +110,7 @@ _AR = Script(
     opening=(
         "مرحباً. هذا فحص أمني آلي من مصرفك. "
         "هناك عملية دفع بقيمة {amount} {currency} إلى {beneficiary} قيد الإيقاف. "
-        "سأطرح عليك ثلاثة أسئلة قصيرة. يمكنك الإجابة بالكلام، "
-        "أو بالضغط على 1 للموافقة و 2 للرفض."
+        "سأطرح عليك ثلاثة أسئلة قصيرة."
     ),
     questions=[
         Question(key="others_present",
@@ -139,8 +137,7 @@ _HI = Script(
     opening=(
         "नमस्ते। यह आपके बैंक की ओर से एक स्वचालित सुरक्षा जाँच है। "
         "{beneficiary} को {amount} {currency} का भुगतान अभी रोका गया है। "
-        "मैं आपसे तीन छोटे सवाल पूछूँगा। आप बोलकर उत्तर दे सकते हैं, "
-        "या हाँ के लिए 1 और नहीं के लिए 2 दबा सकते हैं।"
+        "मैं आपसे तीन छोटे सवाल पूछूँगा।"
     ),
     questions=[
         Question(key="others_present",
@@ -167,8 +164,7 @@ _UR = Script(
     opening=(
         "السلام علیکم۔ یہ آپ کے بینک کی طرف سے ایک خودکار سیکیورٹی جانچ ہے۔ "
         "{beneficiary} کو {amount} {currency} کی ادائیگی اس وقت روکی گئی ہے۔ "
-        "میں آپ سے تین مختصر سوال پوچھوں گا۔ آپ بول کر جواب دے سکتے ہیں، "
-        "یا ہاں کے لیے 1 اور نہیں کے لیے 2 دبا سکتے ہیں۔"
+        "میں آپ سے تین مختصر سوال پوچھوں گا۔"
     ),
     questions=[
         Question(key="others_present",

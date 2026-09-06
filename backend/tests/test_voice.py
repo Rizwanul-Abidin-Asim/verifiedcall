@@ -47,8 +47,9 @@ def test_the_two_coercion_questions_are_marked_in_every_language():
 def test_every_script_offers_the_keypad():
     """The keypad is what makes weak Arabic and Urdu speech recognition survivable, so
     every question in every language has to mention it."""
+    # The opening deliberately does not carry it any more: it explained the keypad,
+    # then question one explained it again, and the greeting ran twenty seconds.
     for lang, s in SCRIPTS.items():
-        assert "1" in s.opening and "2" in s.opening, f"{lang} opening omits the keypad"
         for q in s.questions:
             assert "1" in q.text and "2" in q.text, f"{lang}/{q.key} omits the keypad"
 

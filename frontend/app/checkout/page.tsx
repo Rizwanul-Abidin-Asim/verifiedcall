@@ -77,7 +77,7 @@ const RECENT = [
 
 const BALANCE = 96420.55;
 
-type Screen = "home" | "send" | "review" | "result";
+type Screen = "home" | "send" | "review" | "result" | "cards" | "request";
 type Phase = "idle" | "deciding" | "calling" | "done" | "error";
 
 interface Decision {
@@ -104,6 +104,12 @@ const QUESTION_LABEL: Record<string, string> = {
 
 export default function BankApp() {
   const [screen, setScreen] = useState<Screen>("home");
+  // Nothing on the home screen is decorative. Request adds a pending row to the
+  // activity list, and the card can be frozen, so every button does what it says.
+  const [recent, setRecent] = useState(RECENT);
+  const [frozen, setFrozen] = useState(false);
+  const [reqPayee, setReqPayee] = useState<string>("ahmed");
+  const [reqAmount, setReqAmount] = useState("");
   const [payeeId, setPayeeId] = useState<string>("ahmed");
   const [newName, setNewName] = useState("");
   const [newIban, setNewIban] = useState("");
@@ -254,11 +260,11 @@ export default function BankApp() {
               <ArrowIcon />
               <span>Send</span>
             </button>
-            <button className="bk-action" disabled>
+            <button className="bk-action" onClick={() => setScreen("request")}>
               <RequestIcon />
               <span>Request</span>
             </button>
-            <button className="bk-action" disabled>
+            <button className="bk-action" onClick={() => setScreen("cards")}>
               <CardIcon />
               <span>Cards</span>
             </button>
@@ -266,8 +272,8 @@ export default function BankApp() {
 
           <div className="bk-list">
             <h2 className="bk-h2">Recent</h2>
-            {RECENT.map((r) => (
-              <div key={r.name} className="bk-row">
+            {recent.map((r, i) => (
+              <div key={`${r.name}-${i}`} className="bk-row">
                 <span className="bk-row-dot" data-in={r.in} />
                 <div className="bk-row-main">
                   <p className="bk-row-name">{r.name}</p>
@@ -382,6 +388,102 @@ export default function BankApp() {
           >
             {amountNumber > BALANCE ? "That's more than you have" : "Review"}
           </button>
+        </section>
+
+        {/* --------------------------------------------------------- request */}
+        <section className="bk-screen bk-request" aria-hidden={screen !== "request"}>
+          <header className="bk-bar">
+            <button className="bk-back" onClick={() => setScreen("home")} aria-label="Back">
+              <BackIcon />
+            </button>
+            <h1 className="bk-title">Request money</h1>
+            <span className="bk-bar-spacer" />
+          </header>
+
+          <div className="bk-payees" role="radiogroup" aria-label="Request from">
+            {PAYEES.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={reqPayee === p.id}
+                className={`bk-payee${reqPayee === p.id ? " is-on" : ""}`}
+                onClick={() => setReqPayee(p.id)}
+              >
+                <span className="bk-payee-avatar">{p.initials}</span>
+                <span className="bk-payee-name">{p.name}</span>
+              </button>
+            ))}
+          </div>
+
+          <AmountPad value={reqAmount} onChange={setReqAmount} />
+
+          <button
+            className="bk-cta"
+            disabled={Number(reqAmount || "0") <= 0}
+            onClick={() => {
+              const from = PAYEES.find((p) => p.id === reqPayee) ?? PAYEES[0];
+              setRecent((prev) => [
+                {
+                  name: `Request · ${from.name}`,
+                  when: "Pending",
+                  amount: `+${formatAmount(Number(reqAmount).toFixed(2))}`,
+                  in: true,
+                },
+                ...prev,
+              ]);
+              setReqAmount("");
+              setScreen("home");
+            }}
+          >
+            Send request
+          </button>
+        </section>
+
+        {/* ----------------------------------------------------------- cards */}
+        <section className="bk-screen bk-cards" aria-hidden={screen !== "cards"}>
+          <header className="bk-bar">
+            <button className="bk-back" onClick={() => setScreen("home")} aria-label="Back">
+              <BackIcon />
+            </button>
+            <h1 className="bk-title">Cards</h1>
+            <span className="bk-bar-spacer" />
+          </header>
+
+          <div className={`bk-card bk-cardface${frozen ? " is-frozen" : ""}`}>
+            <span className="bk-card-sheen" aria-hidden="true" />
+            <p className="bk-card-label">{frozen ? "Frozen" : "Debit · Visa"}</p>
+            <p className="bk-cardface-pan">•••• •••• •••• 4429</p>
+            <div className="bk-cardface-foot">
+              <span>RIZWANUL ASIM</span>
+              <span>09/29</span>
+            </div>
+          </div>
+
+          <button className="bk-cta is-ghost" onClick={() => setFrozen((v) => !v)}>
+            {frozen ? "Unfreeze card" : "Freeze card"}
+          </button>
+          <p className="bk-hint">
+            {frozen
+              ? "Payments on this card are paused until you unfreeze it."
+              : "Freezing stops every payment on this card instantly. Unfreeze any time."}
+          </p>
+
+          <div className="bk-list">
+            <h2 className="bk-h2">Controls</h2>
+            <div className="bk-row">
+              <div className="bk-row-main">
+                <p className="bk-row-name">Online payments</p>
+              </div>
+              <p className="bk-row-amt is-in">On</p>
+            </div>
+            <div className="bk-row">
+              <div className="bk-row-main">
+                <p className="bk-row-name">Contactless</p>
+              </div>
+              <p className="bk-row-amt is-in">On</p>
+            </div>
+          </div>
         </section>
 
         {/* ---------------------------------------------------------- result */}
