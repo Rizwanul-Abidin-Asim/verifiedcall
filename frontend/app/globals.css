@@ -839,6 +839,12 @@ button.pay:disabled { background: var(--faint); cursor: not-allowed; }
   opacity: 0;
 }
 
+/* The same guarantee for the screens that swap the grid for a flex column, where a
+   child would otherwise shrink below its content instead: the payee row lost 18px
+   that way and sliced the tops off the avatars. Nothing on a phone shrinks to fit;
+   it scrolls. */
+.bk-screen > * { flex: 0 0 auto; }
+
 .bk-phone[data-screen="home"]   .bk-home,
 .bk-phone[data-screen="send"]   .bk-send,
 .bk-phone[data-screen="review"] .bk-send,
