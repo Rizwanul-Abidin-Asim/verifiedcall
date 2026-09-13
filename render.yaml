@@ -1,0 +1,70 @@
+# Render Blueprint for the VerifiedCall decision API.
+#
+# The frontend is hosted separately on Vercel; this service is only the FastAPI
+# backend that talks to Nokia Network as Code, runs the risk agent, and builds the
+# voice assistant.
+#
+# Schema is created by Alembic in the start command rather than the build command,
+# because a free instance's disk does not survive a restart: running the migration
+# every time the process starts means the database always exists, whatever Render
+# did to the container beforehand.
+#
+# Secrets are marked `sync: false`, so Render prompts for them once in the dashboard
+# and they never live in this repository.
+
+services:
+  - type: web
+    name: verifiedcall-api
+    runtime: python
+    plan: free
+    region: frankfurt          # the closest free region to the Gulf
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+      # SQLite on the instance disk. The demo writes a decision log that only needs to
+      # outlive the demo itself; Postgres is a one-line change to this value.
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./web.db
+
+      - key: APP_ENV
+        value: production
+
+      # The browser holds the call, because UAE carriers block VoIP termination.
+      - key: VOICE_CHANNEL
+        value: web
+      - key: VOICE_MOCK
+        value: "false"
+      - key: DEMO_MODE
+        value: "false"
+
+      # Vercel gives every deployment its own hostname, so the frontend origins are
+      # matched by pattern. CORS_ORIGINS stays for local development.
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,http://127.0.0.1:3000
+      - key: CORS_ORIGIN_REGEX
+        value: https://.*\.vercel\.app
+
+      # --- filled in once, in the Render dashboard ---
+      - key: NOKIA_NAC_API_KEY
+        sync: false
+      - key: NOKIA_NAC_BASE_URL
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VAPI_API_KEY
+        sync: false
+      - key: VAPI_PUBLIC_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
