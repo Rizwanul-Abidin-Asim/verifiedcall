@@ -314,6 +314,14 @@ export default function BankApp() {
 
   return (
     <main className="bk">
+      {/* This page is the customer's phone, so it carries no bank chrome. But a visitor
+          who lands here has no way of knowing the other half of the product exists, and
+          the only link to it was folded inside the demo drawer. This sits outside the
+          device frame, where it reads as a caption on the demo rather than a button
+          inside the customer's banking app. */}
+      <a className="bk-jump" href="/dashboard">
+        Bank&apos;s fraud desk <span aria-hidden="true">→</span>
+      </a>
       {/* Presentational only. On a laptop the app sits inside a device frame, and the
           overlays below — review sheet, in-app prompt, security call — are positioned
           inside that frame rather than over the presenter's whole screen. On a phone the

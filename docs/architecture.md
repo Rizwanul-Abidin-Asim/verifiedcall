@@ -1,7 +1,8 @@
 # Architecture
 
 Structured to match the submission template's Architecture Components section.
-Diagram: https://claude.ai/code/artifact/75e75507-b818-4bb8-8134-4295be7f6802
+Diagram: [`architecture-flow.png`](architecture-flow.png) in this folder, and the
+full decision flow is slide 9 of the pitch deck.
 
 ## How the components communicate
 

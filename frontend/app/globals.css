@@ -828,6 +828,12 @@ button.pay:disabled { background: var(--faint); cursor: not-allowed; }
   display: grid;
   gap: 1rem;
   align-content: start;
+  /* The phone frame has a definite height, so without this the grid is free to
+     squeeze a row below the size of its contents when the screen is short. It picked
+     the account card, which clips (overflow is hidden for the sheen) and silently ate
+     the balance on any laptop under ~700px of viewport. Rows now keep their natural
+     height and the screen scrolls instead, which is what a phone does. */
+  grid-auto-rows: max-content;
   transition: transform .45s var(--bk-ease), opacity .3s ease;
   pointer-events: none;
   opacity: 0;
@@ -1949,6 +1955,30 @@ button.pay:disabled { background: var(--faint); cursor: not-allowed; }
    not. */
 
 .bk-device { width: 100%; max-width: 26rem; }
+
+/* The way across to the fraud desk. Deliberately outside the phone: it is a label on
+   the demo, not a control the customer would ever be shown. */
+.bk-jump {
+  position: fixed;
+  top: .9rem;
+  right: 1rem;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .5rem .85rem;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 220, 180, .28);
+  background: rgba(10, 18, 32, .78);
+  backdrop-filter: blur(6px);
+  font-family: var(--mono);
+  font-size: .76rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #8ff0d5;
+  text-decoration: none;
+}
+.bk-jump:hover { border-color: rgba(61, 220, 180, .6); color: #b9f7e6; }
 
 @media (min-width: 48rem) {
   .bk {
