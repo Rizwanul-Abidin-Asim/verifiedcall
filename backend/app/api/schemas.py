@@ -12,8 +12,9 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.agent.channels import ChannelAssessment
 from app.agent.schemas import AgentMode, ReasoningStep
-from app.db.models import DecisionOutcome, VoiceOutcome, VoiceStatus
+from app.db.models import AnalystAction, DecisionOutcome, VoiceOutcome, VoiceStatus
 
 MSISDN = Annotated[str, Field(pattern=r"^\+[1-9]\d{6,17}$", examples=["+971500000000"])]
 
@@ -50,6 +51,15 @@ class EvaluateRequest(BaseModel):
     device_location_accuracy_m: float | None = Field(default=None, ge=0)
     device_location_denied: bool = False
 
+    persona: str | None = Field(default=None, max_length=40)
+    """Which demo persona to source network signals from. None in production.
+
+    The Nokia simulator gives each sandbox number a fixed personality across every API,
+    and some ordinary real-world combinations — calls diverted but the handset still the
+    customer's own — do not exist on any single number. A persona routes each API to the
+    sandbox number that simulates the needed answer. Every call stays live; the seam is
+    disclosed in the response. See app/agent/personas.py."""
+
     @field_validator("currency")
     @classmethod
     def upper_currency(cls, v: str) -> str:
@@ -71,6 +81,15 @@ class EvaluateResponse(BaseModel):
     demo_seam: bool = Field(
         description="True when signals were looked up against a different number than "
                     "the one we would call. Shown in the UI rather than hidden.")
+    channels: ChannelAssessment | None = Field(
+        default=None,
+        description="Which ways of reaching this customer the network still vouches "
+                    "for, and which signal closed the ones it does not.")
+    persona_seam: str | None = Field(
+        default=None,
+        description="Disclosure line when a demo persona sourced different signals from "
+                    "different sandbox numbers. Null in production and for single-number "
+                    "personas.")
 
 
 class TransactionOut(BaseModel):
@@ -125,6 +144,8 @@ class DecisionListItem(BaseModel):
     is_new_beneficiary: bool
     signals_pulled: int
     voice_outcome: VoiceOutcome | None = None
+    analyst_action: AnalystAction | None = None
+    """Shown in the docket so a reviewed case is visibly settled without opening it."""
 
 
 class DecisionPage(BaseModel):
@@ -132,6 +153,25 @@ class DecisionPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AnalystReviewRequest(BaseModel):
+    """A human overriding, or confirming, what the agent decided."""
+
+    action: AnalystAction
+    reason: str = Field(
+        min_length=3, max_length=500,
+        description="Why. Required, because a fraud team's overrides are only useful "
+                    "later if each one says what the analyst knew that the agent did "
+                    "not.")
+
+
+class AnalystReview(BaseModel):
+    """What a human did, returned alongside what the agent decided."""
+
+    action: AnalystAction
+    reason: str
+    reviewed_at: datetime
 
 
 class DecisionDetail(BaseModel):
@@ -145,6 +185,13 @@ class DecisionDetail(BaseModel):
     transaction: TransactionOut
     signal_calls: list[SignalCallOut]
     voice_call: VoiceCallOut | None = None
+    channels: ChannelAssessment | None = None
+    """Which routes to the customer the network vouched for at decision time.
+
+    Null on decisions taken before channel routing existed, and on approvals where we
+    had no reason to ask."""
+    analyst_review: AnalystReview | None = None
+    """What a person did about it afterwards. Null means nobody has looked yet."""
 
 
 class ErrorResponse(BaseModel):

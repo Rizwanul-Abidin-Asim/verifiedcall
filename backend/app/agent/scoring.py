@@ -11,11 +11,18 @@ by a compliance officer. So the model orchestrates and explains; this file score
 Every weight is in one dict, deliberately, so it can be reviewed at a glance.
 """
 
+from typing import TYPE_CHECKING
+
 from app.agent.schemas import ReasoningStep, TransactionContext
+
+if TYPE_CHECKING:  # channels imports models, not scoring — kept one-way on purpose
+    from app.agent.channels import ChannelAssessment
 from app.camara.models import (
     CallForwardingSignal,
+    DeviceSwapSignal,
     LocationSignal,
     LocationVerificationResult,
+    ReachabilitySignal,
     RoamingSignal,
     SignalResult,
     SimSwapSignal,
@@ -33,17 +40,37 @@ WEIGHTS = {
     # check rather than proving anything, and plenty of careful people decline.
     "device_location_denied": 5,
     # --- network signals ---
-    # Call forwarding outranks SIM swap for APP fraud. A swapped SIM says an identity was
-    # compromised at some point; forwarding says the customer's calls are being
-    # intercepted RIGHT NOW, which is what a scam in progress looks like.
-    "call_forwarding_active": 30,
-    "sim_swap_recent": 15,
+    # Forwarding is scored by TYPE, not as one boolean. Unconditional forwarding sends
+    # every call straight elsewhere and is the shape of an interception set up for this
+    # purpose. Conditional forwarding only fires when the line is busy or unanswered,
+    # which describes a great many ordinary people with voicemail, so it earns a fraction
+    # of the weight rather than the same 30.
+    "call_forwarding_unconditional": 30,
+    "call_forwarding_conditional": 12,
+    # Raised from 15. A swapped SIM is one of the strongest single fraud indicators there
+    # is, and weighting it down because *our* scenario is APP fraud confused "less
+    # decisive for coercion" with "weak evidence". It is still below unconditional
+    # forwarding, because a swap says an identity was compromised at some point while
+    # forwarding says a scam is running right now.
+    "sim_swap_recent": 22,
+    # Alone, a new handset is usually a new phone. Its weight lives in the pairing below.
+    "device_swap_recent": 12,
+    "sim_and_device_swap": 18,
+    # Not a risk factor in the ordinary sense — it is the absence of a way to intervene.
+    # Scored because being unreachable *at the moment of a high-value first-time payment*
+    # is not a coincidence worth ignoring.
+    "device_unreachable": 12,
     "roaming": 8,
     "roaming_with_new_beneficiary": 7,
     "location_false": 25,
     "location_partial": 10,
     "location_unknown": 5,
-    "location_true": -5,  # corroborating evidence should be allowed to reduce risk
+    # Deliberately zero, and it used to be -5. A device sitting exactly where the payment
+    # claims is equally consistent with a normal payment, a customer being talked through
+    # it by a fraudster, a customer under duress, and someone else holding the handset.
+    # It tells us WHICH kind of trouble this could be — which is why choose_outcome()
+    # leans on it hard — but it is not evidence that there is no trouble. See ADR-005.
+    "location_true": 0,
 }
 
 APPROVE_BELOW = 30
@@ -91,17 +118,38 @@ def score_context(ctx: TransactionContext) -> list[Finding]:
 
 
 def _score_call_forwarding(signal: CallForwardingSignal) -> list[Finding]:
-    if not signal.active:
+    """Weighted by the kind of forwarding, because the kinds mean different things.
+
+    `active` on the unconditional endpoint is the authoritative boolean; the type list
+    from /call-forwardings is informational and may be unavailable (501 on some
+    operators), so unconditional is inferred from `active` rather than from the list.
+    """
+    types = [t for t in signal.forwarding_types if t != "inactive"]
+
+    if not signal.active and not types:
         return [("No call forwarding active", 0,
                  "Calls reach the customer normally.", "call_forwarding_clean")]
-    types = ", ".join(t for t in signal.forwarding_types if t != "inactive")
-    detail = f" ({types})" if types else ""
+
+    if signal.active:
+        detail = f" (also: {', '.join(t for t in types if t != 'unconditional')})" \
+            if len(types) > 1 else ""
+        return [(
+            f"UNCONDITIONAL call forwarding is active{detail}",
+            WEIGHTS["call_forwarding_unconditional"],
+            "Every incoming call is being sent elsewhere. The bank's own verification "
+            "call would be answered by whoever set this up — so this is not only "
+            "evidence of a scam in progress, it closes the channel we would normally "
+            "use to stop it.", "call_forwarding_unconditional")]
+
+    # Conditional only: calls divert when busy or unanswered. Suspicious in context,
+    # unremarkable on its own — this is what voicemail looks like.
     return [(
-        f"Unconditional call forwarding is ACTIVE{detail}",
-        WEIGHTS["call_forwarding_active"],
-        "The customer's incoming calls are being redirected. A bank calling to verify "
-        "would not reach them — this is what an in-progress scam looks like, not merely "
-        "a past compromise.", "call_forwarding_active")]
+        f"Conditional call forwarding is active ({', '.join(types)})",
+        WEIGHTS["call_forwarding_conditional"],
+        "Calls divert only when the line is busy or goes unanswered. That is ordinary "
+        "voicemail behaviour for most people, so it is weighted well below unconditional "
+        "forwarding — but it does mean a missed call could be picked up elsewhere.",
+        "call_forwarding_conditional")]
 
 
 def _score_sim_swap(signal: SimSwapSignal) -> list[Finding]:
@@ -112,9 +160,57 @@ def _score_sim_swap(signal: SimSwapSignal) -> list[Finding]:
             if signal.latest_sim_change else " recently")
     return [(
         f"SIM was swapped{when}", WEIGHTS["sim_swap_recent"],
-        "A recent SIM change means one-time passcodes may reach someone else. Weaker "
-        "evidence here than usual, because in APP fraud the genuine customer is the one "
-        "authorising the payment.", "sim_swap_recent")]
+        "A recent SIM change means one-time passcodes and verification texts may be "
+        "arriving on somebody else's SIM. It does not decide between theft and coercion "
+        "on its own — in a coerced payment the genuine customer is still the one "
+        "authorising — but it is strong evidence that this number's identity has already "
+        "been interfered with, and it closes SMS as a way to reach them.",
+        "sim_swap_recent")]
+
+
+def _score_device_swap(signal: DeviceSwapSignal) -> list[Finding]:
+    if not signal.swapped:
+        return [("Same handset as before", 0,
+                 "The SIM has not moved into a different phone.", "device_swap_clean")]
+    when = (f" on {signal.latest_device_change:%Y-%m-%d}"
+            if signal.latest_device_change else " recently")
+    return [(
+        f"SIM moved into a different handset{when}", WEIGHTS["device_swap_recent"],
+        "On its own this is usually somebody replacing a broken phone, so it is weighted "
+        "lightly. It matters mainly because it means we cannot assume the banking app is "
+        "still on the device the customer is holding.", "device_swap_recent")]
+
+
+def score_combinations(signals: list[SignalResult]) -> list[Finding]:
+    """Findings that only exist when two signals are read together.
+
+    Kept separate from score_signal() because a combination is not a property of any one
+    signal, and burying it inside whichever happened to be scored last would make the
+    weights table unreadable.
+    """
+    found: list[Finding] = []
+
+    sim = next((s for s in signals if isinstance(s, SimSwapSignal)), None)
+    device = next((s for s in signals if isinstance(s, DeviceSwapSignal)), None)
+    if sim is not None and device is not None and sim.swapped and device.swapped:
+        found.append((
+            "Both the SIM and the handset changed",
+            WEIGHTS["sim_and_device_swap"],
+            "Either alone is usually innocent — people replace lost SIMs and broken "
+            "phones. Together they are the shape of somebody rebuilding this customer's "
+            "identity on hardware they control, which is why the pair scores more than "
+            "the sum of its parts.", "sim_and_device_swap"))
+
+    reach = next((s for s in signals if isinstance(s, ReachabilitySignal)), None)
+    if reach is not None and not reach.reachable:
+        found.append((
+            "The network cannot reach this device on any channel",
+            WEIGHTS["device_unreachable"],
+            "Not a risk factor so much as the loss of every way to check. A customer "
+            "being unreachable by their bank at the exact moment of a high-value payment "
+            "to a new payee is a coincidence worth pricing in.", "device_unreachable"))
+
+    return found
 
 
 def _score_roaming(signal: RoamingSignal, ctx: TransactionContext) -> list[Finding]:
@@ -148,8 +244,12 @@ _LOCATION_RATIONALE = {
         "The network cannot locate the device, so this check adds no assurance."),
     LocationVerificationResult.TRUE: (
         "location_true",
-        "The device is where the payment says it is. The genuine customer appears to be "
-        "present and holding their own phone."),
+        "The device is where the payment says it is. This does NOT make the payment "
+        "safe: it is equally consistent with a normal transfer, with the customer being "
+        "talked through it by a fraudster, with the customer acting under duress, and "
+        "with somebody else holding their phone. What it rules out is the customer being "
+        "somewhere else entirely — so it changes a decline into a conversation, and "
+        "scores nothing by itself."),
 }
 
 
@@ -169,6 +269,11 @@ def score_signal(signal: SignalResult, ctx: TransactionContext) -> list[Finding]
         return _score_roaming(signal, ctx)
     if isinstance(signal, LocationSignal):
         return _score_location(signal)
+    if isinstance(signal, DeviceSwapSignal):
+        return _score_device_swap(signal)
+    # Reachability and location retrieval carry no weight of their own. Reachability is
+    # scored only in combination (see score_combinations) and otherwise drives channel
+    # routing; retrieval exists to explain a decision, not to change it.
     return []
 
 
@@ -181,7 +286,11 @@ def customer_appears_absent(signals: list[SignalResult]) -> bool:
     )
 
 
-def choose_outcome(score: int, signals: list[SignalResult]) -> tuple[DecisionOutcome, str]:
+def choose_outcome(
+    score: int,
+    signals: list[SignalResult],
+    channels: "ChannelAssessment | None" = None,
+) -> tuple[DecisionOutcome, str]:
     """Turn a score into an action. Returns (outcome, rationale).
 
     The rule that matters, and the product thesis in one line: **we do not decline a
@@ -191,6 +300,11 @@ def choose_outcome(score: int, signals: list[SignalResult]) -> tuple[DecisionOut
     also the wrong response to coercion: if someone is being talked into this, a thirty
     second call resolves it and a decline does not. Decline is reserved for the case where
     the evidence says the person transacting probably is not the customer at all.
+
+    `channels` adds the second half of that sentence. "We phone them" assumed a phone we
+    could reach; once the network can tell us that assumption is false, an intervention
+    we cannot safely deliver is not an intervention. Optional so that callers which
+    predate channel routing — and the tests — still work.
     """
     if score < APPROVE_BELOW:
         return DecisionOutcome.APPROVE, (
@@ -203,6 +317,25 @@ def choose_outcome(score: int, signals: list[SignalResult]) -> tuple[DecisionOut
             "does not place the device where this payment originates. That reads as "
             "account takeover rather than a customer under pressure, so calling the "
             "registered number would not reach the person transacting.")
+
+    if channels is not None and channels.no_safe_channel:
+        closed = ", ".join(
+            f"{v.channel.value} ({v.blocked_by})"
+            for v in channels.verdicts if v.blocked_by)
+        return DecisionOutcome.DECLINE, (
+            f"Risk score {score} warrants checking with the customer, but there is no "
+            f"way left to ask them: {closed}. Every remaining route to this person runs "
+            "through whoever compromised it, so contacting them would confirm the scam "
+            "in the bank's own voice rather than interrupt it. The payment is held and a "
+            "human analyst is paged. Being unable to reach a customer at the exact "
+            "moment of a high-risk payment is not a gap in the check — it is the "
+            "clearest thing the network has told us.")
+
+    if channels is not None and channels.preferred is not None:
+        return DecisionOutcome.INTERVENE, (
+            f"Risk score {score} warrants holding the payment, and the network says we "
+            f"can still reach the customer over {channels.preferred.value}. "
+            f"{channels.strategy}")
 
     return DecisionOutcome.INTERVENE, (
         f"Risk score {score} warrants holding the payment, but the customer appears to be "
@@ -233,5 +366,13 @@ def build_trace(ctx: TransactionContext,
                 observed=observed, rationale=rationale, score_delta=delta,
                 running_score=clamp(running), source=str(signal.source),
                 latency_ms=round(signal.latency_ms, 1)))
+
+    # Combinations last, so the trace reads as "here is each fact, and here is what they
+    # mean together" rather than interleaving the two.
+    for observed, delta, rationale, _key in score_combinations(signals):
+        running += delta
+        steps.append(ReasoningStep(
+            step=len(steps) + 1, kind="assessment", observed=observed,
+            rationale=rationale, score_delta=delta, running_score=clamp(running)))
 
     return clamp(running), steps

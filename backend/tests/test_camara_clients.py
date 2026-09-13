@@ -205,4 +205,5 @@ async def test_every_api_has_a_fallback():
 
     assert set(_BUILDERS) == {
         "sim_swap", "call_forwarding", "device_status", "location_verification",
+        "device_swap", "device_reachability", "location_retrieval",
     }

@@ -79,9 +79,70 @@ class LocationSignal(SignalResult):
 
     Verifies against an area WE supply; it does not return a position. match_rate is
     present only on PARTIAL; last_location_time is omitted on UNKNOWN.
+
+    A TRUE here is NOT exculpatory. The device being where the payment claims is
+    consistent with a normal payment, with a customer being coached by a fraudster, with
+    a customer under physical duress, and with someone else holding the handset. It
+    narrows *which* kind of fraud this could be; it does not rule fraud out. See ADR-005.
     """
 
     api_name: str = "location_verification"
     verification_result: LocationVerificationResult
     match_rate: int | None = None
+    last_location_time: datetime | None = None
+
+
+class DeviceSwapSignal(SignalResult):
+    """POST /passthrough/camara/v1/device-swap/device-swap/v1/check + /retrieve-date
+
+    Note v1, not v0 like SIM Swap. maxAge is in hours.
+
+    Read together with SIM Swap this separates two very different stories. A SIM moved
+    into the same handset is often a genuine replacement; a new SIM in a new handset is
+    the shape of a takeover. Neither alone says much.
+    """
+
+    api_name: str = "device_swap"
+    swapped: bool
+    latest_device_change: datetime | None = None
+
+
+class ReachabilitySignal(SignalResult):
+    """POST /device-status/device-reachability-status/v1/retrieve
+
+    The only CAMARA signal that answers per-channel rather than per-risk: connectivity
+    comes back as a list containing SMS and/or DATA. `connectivity` is absent entirely
+    when reachable is false.
+
+    This is what lets us ask "can we still reach this customer, and how?" rather than
+    assuming a phone call will land. See docs/architecture.md, channel trust.
+    """
+
+    api_name: str = "device_reachability"
+    reachable: bool
+    connectivity: list[str] = Field(default_factory=list)
+    last_status_time: datetime | None = None
+
+    @property
+    def has_data(self) -> bool:
+        return "DATA" in self.connectivity
+
+    @property
+    def has_sms(self) -> bool:
+        return "SMS" in self.connectivity
+
+
+class LocationRetrievalSignal(SignalResult):
+    """POST /location-retrieval/v0/retrieve
+
+    Unlike Location Verification this returns an actual position: an area with a centre
+    and a radius. We use it for the *explanation* — "the network puts the handset in
+    Budapest, the payment claims Dubai" is a sentence a fraud analyst can act on, where
+    "verificationResult: FALSE" is not.
+    """
+
+    api_name: str = "location_retrieval"
+    latitude: float | None = None
+    longitude: float | None = None
+    radius_m: int | None = None
     last_location_time: datetime | None = None

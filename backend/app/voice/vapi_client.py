@@ -27,7 +27,14 @@ import httpx
 
 from app.config import settings
 from app.voice.classify import HESITATION_MS, Answer, Assessment, Reply, assess, interpret
-from app.voice.scripts import SCRIPTS, SPEECH_LOCALE, Language, Script, script_for
+from app.voice.scripts import (
+    SCRIPTS,
+    SPEECH_LOCALE,
+    THANKS,
+    Language,
+    Script,
+    script_for,
+)
 
 log = logging.getLogger("voice.client")
 
@@ -91,7 +98,21 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
     control next to the tests that exercise it.
     """
     locale = SPEECH_LOCALE[script.language]
-    questions = "\n".join(f"{i}. {q.text}" for i, q in enumerate(script.questions, 1))
+
+    # The model is handed the exact lines it may say and asked which one comes next. It
+    # is never asked to compose anything, because composing is where every failure came
+    # from: told to "ask these questions in order", it paraphrased them, inserted "um"
+    # and "as I was saying", mangled one into "press 1 if you're worth", and then put a
+    # question it already had an answer to a second time.
+    #
+    # Ten behavioural rules had accumulated trying to police that, and each round of
+    # them made the drift worse rather than better. They are gone. The constraint is
+    # structural now: the whole reply has to be one of a handful of strings we wrote, so
+    # there is nothing left to improvise. Question 1 is in firstMessage, so the model
+    # only ever sends the later questions and the closing.
+    scripted = [q.text for q in script.questions[1:]] + [THANKS[script.language]]
+    lines = "\n".join(f"LINE {i}: {text}" for i, text in enumerate(scripted, 1))
+    final = len(scripted)
     # Ask Vapi to extract the three answers for us. Shapes confirmed against their
     # OpenAPI spec: the result lands in call.analysis.structuredData.
     answer_schema = {
@@ -139,7 +160,16 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
                             "something that is not a yes or a no, or when the transcript "
                             "is too garbled to be sure. Never infer an answer they did "
                             "not give: a wrong yes blocks a real payment and a wrong no "
-                            "releases a fraudulent one."
+                            "releases a fraudulent one.\n\n"
+                            "Read the whole sentence, not the first word. \"No one has "
+                            "told me\" is a NO. \"No, they were found by me\" is a NO. "
+                            "\"Yes, I was given the details\" is a YES.\n\n"
+                            "Speech transcription writes \"no one\" as \"No. 1\" and "
+                            "\"No one\" as \"No, 1\". A digit that appears inside a "
+                            "sentence like that is part of the words, NOT a keypad "
+                            "press — and reading that 1 as the keypad answer for yes "
+                            "would invert the customer's answer. Only treat a digit as a "
+                            "keypad press when it stands alone as the entire reply."
                         ),
                     },
                     {
@@ -156,41 +186,122 @@ def build_assistant(script: Script, amount: str, currency: str, beneficiary: str
             },
         },
         "model": {
-            "provider": "groq",
-            "model": settings.groq_model,
+            # See settings.voice_llm_provider for why this is not the risk agent's model.
+            "provider": settings.voice_llm_provider,
+            "model": settings.voice_llm_model,
+            # How the assistant hangs up. This used to be `endCallFunctionEnabled: true`
+            # at the top level, which Vapi has since removed from the API — so the flag
+            # was being ignored and the assistant had no way to end anything. It
+            # delivered its closing line and then sat on the call until the customer hung
+            # up or the 120s cap expired, which is why completed calls were recording 58
+            # and 70 seconds for three short questions.
+            "tools": [{"type": "endCall"}],
             # The call skipped question 3 and said goodbye on its own. A deterministic
             # sample is the cheapest lever against a model improvising the sequence.
             "temperature": 0,
             "messages": [{
                 "role": "system",
                 "content": (
-                    f"You are an automated bank security check. Speak only "
-                    f"{script.language.value}.\n\n"
-                    f"Ask these questions, in this exact order, one per turn:\n"
-                    f"{questions}\n\n"
-                    "Rules, in priority order.\n"
-                    "1. Question 1 was already asked in your greeting. Your next turn "
-                    "asks question 2. After the customer answers question 2, ask "
-                    "question 3.\n"
-                    "2. You may end the call ONLY after the customer has answered "
-                    "question 3. Ending before question 3 is answered is a serious "
-                    "error. Do not say goodbye, thank the customer, or summarise until "
-                    "question 3 has an answer.\n"
-                    "3. Accept a spoken yes or no, the typed word yes or no, or a "
-                    "keypad press of 1 for yes and 2 for no.\n"
-                    "4. If an answer is not a clear yes or no, repeat the same question "
-                    "once, then move on.\n"
-                    "5. Do not argue, reassure, explain fraud, or add anything beyond "
-                    "the questions. One question per turn.\n"
-                    "6. Once question 3 is answered, say exactly: \"Thank you. Please "
-                    "stay on the line.\" Then end the call."
+                    f"You are a bank's automated security check, speaking "
+                    f"{script.language.value}. You are not having a conversation.\n\n"
+                    f"Your reply is always exactly one of these lines, copied word for "
+                    f"word:\n\n{lines}\n\n"
+                    f"The customer has already been asked question 1 in the greeting. "
+                    f"Send LINE 1 once they answer it. Send the next line once they "
+                    f"answer the one before it. After LINE {final}, end the call.\n\n"
+                    "Never send anything that is not one of those lines. Do not reword "
+                    "them, shorten them, add to them, or say anything before or after "
+                    "one. No greetings, no filler, no \"um\", no explaining, no "
+                    "summarising, no asking whether they are still there.\n\n"
+                    "Send a line a second time only if the customer's reply gave you no "
+                    "idea which way they meant it, and then never a third time.\n\n"
+                    "A reply counts as an answer whenever its meaning is clear: yes, "
+                    "no, 1, 2, \"someone gave them to me\" (yes), \"I found it myself\" "
+                    "(no), \"no one has told me\" (no). Never read the \"one\" in \"no "
+                    "one\" as the digit 1."
                 ),
             }],
         },
-        "voice": {"provider": "11labs", "voiceId": "burt"},
+        # Every field here is set deliberately; the defaults were wrong for this call.
+        #
+        # model: Vapi defaults to eleven_turbo_v2, which is ENGLISH ONLY. We offer this
+        # call in Arabic, Hindi and Urdu, so the default silently undermined the one
+        # claim the voice layer exists to make. eleven_turbo_v2_5 is multilingual and
+        # still low-latency.
+        #
+        # speed: the default read far too fast for this call. Range is 0.7-1.2 (Vapi's
+        # schema). This is a bank ringing someone who is frightened, possibly in their
+        # second language, with somebody else in the room — the delivery has to be
+        # slower than a normal assistant, not faster.
+        #
+        # stability high, style at zero: we want the same flat, official delivery every
+        # time. Expressiveness here would read as a person, and a person is exactly what
+        # a scammer would send.
+        "voice": {
+            "provider": "11labs",
+            "voiceId": "burt",
+            "model": "eleven_turbo_v2_5",
+            # 0.85 was too slow to listen to; 1.0 (the default) was too quick for
+            # somebody frightened and possibly hearing this in a second language.
+            "speed": 0.95,
+            "stability": 0.7,
+            "similarityBoost": 0.75,
+            "style": 0,
+        },
         "transcriber": {"provider": "deepgram", "model": "nova-2", "language": locale},
+        # When the assistant may be cut off mid-sentence.
+        #
+        # Vapi's defaults are built for an assistant that chats, where "no", "wait" and
+        # "actually" mean *stop talking*. This is a yes/no security questionnaire, and
+        # in it "no" is an ANSWER. Left at the defaults, a customer answering "no"
+        # silenced the question they were answering, and because numWords defaults to 0
+        # the interruption ran off raw voice activity — so a breath, a cough, or the
+        # other person in the room was enough to truncate a question. Observed live: the
+        # third question was cut to "Has anyone asked you to keep this payment" and the
+        # customer never heard what they were agreeing to.
+        #
+        # numWords=2 moves the decision from voice activity to actual transcribed words,
+        # so the assistant finishes its sentence unless somebody genuinely talks over it.
+        "stopSpeakingPlan": {
+            "numWords": 2,
+            "backoffSeconds": 1,
+            # Empty on purpose, and the emptiness is the fix.
+            #
+            # Vapi treats these as backchannelling — noise a speaker makes while
+            # listening, which should not count as a turn. Its default list contains
+            # "yes", "yeah", "okay" and "right". In a questionnaire whose only valid
+            # answers are yes and no, that means the answer is discarded: observed live,
+            # the customer said "No", Vapi swallowed it as backchannel, the model saw
+            # silence, asked "Hello?", and put the same question a third time.
+            #
+            # There is no such thing as a throwaway word on this call. Everything the
+            # customer says is either the answer or evidence about the answer.
+            "acknowledgementPhrases": [],
+            # Only genuine "stop talking" phrases survive here. 'no', 'not', 'dont',
+            # 'never' and 'but' were removed from Vapi's default list on purpose.
+            "interruptionPhrases": [
+                "stop", "shut up", "be quiet", "enough", "silence", "pause",
+                "hold on", "wait a moment", "say that again", "repeat that",
+            ],
+        },
+        # How long to wait before deciding the customer has finished speaking.
+        #
+        # Vapi waits 1.5s after a transcript that ends without punctuation, which is
+        # sensible for open conversation and far too slow here: the answers are one word,
+        # and a second and a half of dead air after "no" reads as the line having dropped.
+        # Deepgram also often leaves a bare "no" unpunctuated, so that was the common
+        # path, not the rare one.
+        "startSpeakingPlan": {
+            "waitSeconds": 0.4,
+            "transcriptionEndpointingPlan": {
+                "onPunctuationSeconds": 0.1,
+                "onNoPunctuationSeconds": 0.9,
+                # Kept at the default. Lowering it would cut "ninety thousand" in half,
+                # and the amount is read back to the customer.
+                "onNumberSeconds": 0.4,
+            },
+        },
         "maxDurationSeconds": CALL_TIMEOUT_S,
-        "endCallFunctionEnabled": True,
     }
 
 

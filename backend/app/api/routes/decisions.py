@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.schemas import (
+    AnalystReview,
+    AnalystReviewRequest,
     DecisionDetail,
     DecisionListItem,
     DecisionPage,
@@ -18,6 +20,8 @@ from app.api.schemas import (
     VoiceCallOut,
 )
 from app.db.models import Decision, Transaction
+from app.services.audit import record_analyst_review
+from app.services.events import broker
 from app.db.session import get_session
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -70,17 +74,15 @@ async def list_decisions(
             is_new_beneficiary=d.transaction.is_new_beneficiary,
             signals_pulled=len(d.transaction.signal_calls),
             voice_outcome=d.transaction.voice_call.outcome if d.transaction.voice_call else None,
+            analyst_action=d.analyst_action,
         )
         for d in rows
     ]
     return DecisionPage(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get("/decisions/{decision_id}", response_model=DecisionDetail)
-async def get_decision(
-    decision_id: uuid.UUID,
-    session: SessionDep,
-) -> DecisionDetail:
+async def _load_decision(session: AsyncSession, decision_id: uuid.UUID) -> Decision:
+    """Fetch a decision with everything the console renders, or 404."""
     decision = (await session.execute(
         select(Decision)
         .where(Decision.id == decision_id)
@@ -90,7 +92,15 @@ async def get_decision(
 
     if decision is None:
         raise HTTPException(status_code=404, detail=f"No decision with id {decision_id}")
+    return decision
 
+
+@router.get("/decisions/{decision_id}", response_model=DecisionDetail)
+async def get_decision(
+    decision_id: uuid.UUID,
+    session: SessionDep,
+) -> DecisionDetail:
+    decision = await _load_decision(session, decision_id)
     txn = decision.transaction
     voice = txn.voice_call
 
@@ -118,4 +128,45 @@ async def get_decision(
             answers=voice.answers, duration_s=voice.duration_s, is_mock=voice.is_mock,
             created_at=voice.created_at,
         ),
+        channels=decision.channel_assessment,
+        analyst_review=None if decision.analyst_action is None else AnalystReview(
+            action=decision.analyst_action,
+            reason=decision.analyst_reason or "",
+            reviewed_at=decision.analyst_reviewed_at,
+        ),
     )
+
+
+@router.post("/decisions/{decision_id}/review", response_model=DecisionDetail)
+async def review_decision(
+    decision_id: uuid.UUID,
+    payload: AnalystReviewRequest,
+    session: SessionDep,
+) -> DecisionDetail:
+    """Release or block a payment the agent has already ruled on.
+
+    This is the human in the loop, and it is deliberately an addition to the record
+    rather than an edit of it: the agent's outcome is left exactly as it was and the
+    analyst's action is stored next to it. A bank needs to be able to ask "how often do
+    we overrule this thing, and were we right?", and that question is unanswerable if a
+    release quietly rewrites the hold it reversed.
+    """
+    decision = await _load_decision(session, decision_id)
+
+    try:
+        await record_analyst_review(session, decision, payload.action, payload.reason)
+    except ValueError as exc:
+        # Already reviewed, or an empty reason. Both are the caller's problem to fix,
+        # and neither is a server fault.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await session.commit()
+
+    # Tell the console, after the commit and outside the decision path.
+    await broker.publish({
+        "kind": "review",
+        "decision_id": str(decision.id),
+        "analyst_action": payload.action.value,
+    })
+
+    return await get_decision(decision_id, session)

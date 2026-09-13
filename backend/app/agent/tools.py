@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.schemas import TransactionContext
 from app.camara.call_forwarding import check_call_forwarding
+from app.camara.device_reachability import check_reachability
 from app.camara.device_status import check_device_status
+from app.camara.device_swap import check_device_swap
+from app.camara.location_retrieval import retrieve_location
 from app.camara.location_verification import centre_for, verify_location
 from app.camara.models import SignalResult
 from app.camara.sim_swap import check_sim_swap
@@ -38,7 +41,21 @@ class AgentDeps:
     expected_city: str = "AE-DXB"
     device_latitude: float | None = None
     device_longitude: float | None = None
+    persona: object | None = None
+    """A demo Persona, or None in production. See app/agent/personas.py."""
     _write_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    def msisdn_for(self, api_name: str) -> str:
+        """Which number to ask this particular question of.
+
+        Always the customer's own number in production. A demo persona may route
+        individual APIs to different sandbox numbers, because no single simulator number
+        expresses some combinations that are ordinary in real life — personas.py explains
+        this, and the number used is persisted in the audit trail either way.
+        """
+        if self.persona is not None:
+            return self.persona.msisdn_for(api_name)
+        return self.context.signal_msisdn
 
     async def capture(self, signal: SignalResult, request_payload: dict) -> None:
         """Record a signal once, to both the audit trail and the run's collection.
@@ -81,8 +98,9 @@ async def check_call_forwarding_tool(ctx: RunContext[AgentDeps]) -> str:
     if (existing := _already_pulled(deps, "call_forwarding")) is not None:
         return f"Already checked: forwarding active = {existing.active}."
 
-    payload = {"phoneNumber": deps.context.signal_msisdn}
-    signal = await check_call_forwarding(deps.context.signal_msisdn)
+    msisdn = deps.msisdn_for("call_forwarding")
+    payload = {"phoneNumber": msisdn}
+    signal = await check_call_forwarding(msisdn)
     await deps.capture(signal, payload)
 
     if not signal.active:
@@ -105,8 +123,9 @@ async def check_sim_swap_tool(ctx: RunContext[AgentDeps]) -> str:
     if (existing := _already_pulled(deps, "sim_swap")) is not None:
         return f"Already checked: SIM swapped = {existing.swapped}."
 
-    payload = {"phoneNumber": deps.context.signal_msisdn, "maxAge": 240}
-    signal = await check_sim_swap(deps.context.signal_msisdn)
+    msisdn = deps.msisdn_for("sim_swap")
+    payload = {"phoneNumber": msisdn, "maxAge": 240}
+    signal = await check_sim_swap(msisdn)
     await deps.capture(signal, payload)
 
     if not signal.swapped:
@@ -125,8 +144,9 @@ async def check_device_roaming_tool(ctx: RunContext[AgentDeps]) -> str:
     if (existing := _already_pulled(deps, "device_status")) is not None:
         return f"Already checked: roaming = {existing.roaming}."
 
-    payload = {"device": {"phoneNumber": deps.context.signal_msisdn}}
-    signal = await check_device_status(deps.context.signal_msisdn)
+    msisdn = deps.msisdn_for("device_status")
+    payload = {"device": {"phoneNumber": msisdn}}
+    signal = await check_device_status(msisdn)
     await deps.capture(signal, payload)
 
     if not signal.roaming:
@@ -154,13 +174,14 @@ async def verify_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
                                      deps.expected_city)
     against = ("the location the device reported"
                if deps.device_latitude is not None else "the expected location")
+    msisdn = deps.msisdn_for("location_verification")
     payload = {
-        "device": {"phoneNumber": deps.context.signal_msisdn},
+        "device": {"phoneNumber": msisdn},
         "area": {"areaType": "CIRCLE",
                  "center": {"latitude": latitude, "longitude": longitude},
                  "radius": 50_000},
     }
-    signal = await verify_location(deps.context.signal_msisdn, latitude, longitude)
+    signal = await verify_location(msisdn, latitude, longitude)
     await deps.capture(signal, payload)
 
     described = {
@@ -173,9 +194,98 @@ async def verify_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
     return described + rate + _provenance(signal)
 
 
+async def check_device_swap_tool(ctx: RunContext[AgentDeps]) -> str:
+    """Check whether this SIM has moved into a different handset recently.
+
+    Only worth pulling alongside the SIM swap check — apart, each one is mostly noise,
+    because people do replace broken phones and lost SIMs. Together they separate a
+    genuine replacement from a takeover: a new SIM in a new handset within a short window
+    is the shape of somebody rebuilding the customer's identity on their own hardware.
+
+    Also tells us whether an in-app prompt would still land on the phone the customer is
+    holding. About 300ms, plus another 300ms to date the change if there was one.
+    """
+    deps = ctx.deps
+    if (existing := _already_pulled(deps, "device_swap")) is not None:
+        return f"Already checked: device swapped = {existing.swapped}."
+
+    msisdn = deps.msisdn_for("device_swap")
+    payload = {"phoneNumber": msisdn, "maxAge": 240}
+    signal = await check_device_swap(msisdn)
+    await deps.capture(signal, payload)
+
+    if not signal.swapped:
+        return ("The SIM is still in the same handset it was in 10 days ago."
+                + _provenance(signal))
+    when = (f" on {signal.latest_device_change:%d %b}"
+            if signal.latest_device_change else " recently")
+    return (f"THIS SIM MOVED INTO A DIFFERENT HANDSET{when}." + _provenance(signal))
+
+
+async def check_reachability_tool(ctx: RunContext[AgentDeps]) -> str:
+    """Check which channels the network can still reach this customer on.
+
+    Different in kind from the other checks: it does not tell you how risky the payment
+    is, it tells you whether you could do anything about it. Comes back as a list of SMS
+    and/or DATA, or nothing at all if the device is unreachable.
+
+    Pull this on any payment you are considering holding, because a hold that cannot be
+    followed by contact is just a blocked customer. If it returns nothing reachable on a
+    payment that already looks bad, say so plainly — somebody having arranged for this
+    person to be unreachable at this exact moment is itself evidence. About 300ms.
+    """
+    deps = ctx.deps
+    if (existing := _already_pulled(deps, "device_reachability")) is not None:
+        return f"Already checked: reachable on {existing.connectivity or 'nothing'}."
+
+    msisdn = deps.msisdn_for("device_reachability")
+    payload = {"device": {"phoneNumber": msisdn}}
+    signal = await check_reachability(msisdn)
+    await deps.capture(signal, payload)
+
+    if not signal.reachable:
+        return ("THE NETWORK CANNOT REACH THIS DEVICE AT ALL — no data, no SMS."
+                + _provenance(signal))
+    return (f"Reachable on: {', '.join(signal.connectivity)}."
+            + ("" if signal.has_data else " No data path, so an in-app prompt would not "
+                                          "arrive.")
+            + _provenance(signal))
+
+
+async def retrieve_device_location_tool(ctx: RunContext[AgentDeps]) -> str:
+    """Ask the network where the handset actually is, rather than whether it is somewhere.
+
+    The location *verification* check answers yes/no against an area we supply. This
+    returns a position. Prefer verification for the decision — it is cheaper and it is
+    the privacy-respecting way to ask — and use this only once a payment is already
+    heading for a hold or a decline, when a fraud analyst will need to read the case.
+
+    "The network puts the handset in Budapest" is something a human can act on.
+    "verificationResult: FALSE" is not. About 300ms.
+    """
+    deps = ctx.deps
+    if (existing := _already_pulled(deps, "location_retrieval")) is not None:
+        return f"Already retrieved: {existing.latitude}, {existing.longitude}."
+
+    msisdn = deps.msisdn_for("location_retrieval")
+    payload = {"device": {"phoneNumber": msisdn}, "maxAge": 3600}
+    signal = await retrieve_location(msisdn)
+    await deps.capture(signal, payload)
+
+    if signal.latitude is None:
+        return "The network could not return a position for this device." \
+            + _provenance(signal)
+    return (f"The network places the handset at {signal.latitude:.4f}, "
+            f"{signal.longitude:.4f} (accurate to about {signal.radius_m}m)."
+            + _provenance(signal))
+
+
 ALL_TOOLS = [
     check_call_forwarding_tool,
     check_sim_swap_tool,
     check_device_roaming_tool,
     verify_device_location_tool,
+    check_device_swap_tool,
+    check_reachability_tool,
+    retrieve_device_location_tool,
 ]

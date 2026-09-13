@@ -28,6 +28,9 @@ CF = "/passthrough/camara/v1/call-forwarding-signal/call-forwarding-signal/v0.3"
 SS = "/passthrough/camara/v1/sim-swap/sim-swap/v0"
 ROAM = "/device-status/device-roaming-status/v1/retrieve"
 LOC = "/location-verification/v1/verify"
+DSWAP = "/passthrough/camara/v1/device-swap/device-swap/v1"
+REACH = "/device-status/device-reachability-status/v1/retrieve"
+LOCRET = "/location-retrieval/v0/retrieve"
 
 
 @pytest.fixture(autouse=True)
@@ -69,8 +72,16 @@ def context(amount="42000.00", new_payee=True, msisdn="+99999991004"):
         is_new_beneficiary=new_payee, signal_msisdn=msisdn, local_hour=23)
 
 
-def mock_sandbox(*, all_bad=True, location="TRUE"):
-    """Wire the routes the way the sandbox actually responds."""
+def mock_sandbox(*, all_bad=True, location="TRUE", device_swapped=False,
+                 connectivity=("SMS", "DATA")):
+    """Wire the routes the way the sandbox actually responds.
+
+    device_swapped and connectivity default to the *reachable* case on purpose, even when
+    all_bad is True. "Risky payment, customer still contactable" is the ordinary shape of
+    this problem and the one most of these tests are about. Closing every channel at once
+    is a specific scenario with its own test, not a sensible default — defaulting to it
+    would silently turn every intervene assertion into a decline.
+    """
     respx.post(f"{BASE_URL}{CF}/unconditional-call-forwardings").respond(
         json={"active": all_bad})
     respx.post(f"{BASE_URL}{CF}/call-forwardings").respond(
@@ -80,6 +91,16 @@ def mock_sandbox(*, all_bad=True, location="TRUE"):
         json={"roaming": all_bad, "countryCode": 36, "countryName": ["HU"]}
         if all_bad else {"roaming": False})
     respx.post(f"{BASE_URL}{LOC}").respond(json={"verificationResult": location})
+    respx.post(f"{BASE_URL}{DSWAP}/check").respond(json={"swapped": device_swapped})
+    respx.post(f"{BASE_URL}{DSWAP}/retrieve-date").respond(
+        json={"latestDeviceChange": "2026-08-18T13:27:11.128970Z"})
+    respx.post(f"{BASE_URL}{REACH}").respond(
+        json={"reachable": bool(connectivity), "connectivity": list(connectivity)})
+    respx.post(f"{BASE_URL}{LOCRET}").respond(json={
+        "lastLocationTime": "2026-09-12T10:39:01.859799Z",
+        "area": {"areaType": "CIRCLE",
+                 "center": {"latitude": 47.4862, "longitude": 19.0791},
+                 "radius": 1000}})
 
 
 def scripted_model(tool_names: list[str], outcome: str = "intervene") -> FunctionModel:
@@ -200,7 +221,8 @@ async def test_model_failure_falls_back_to_deterministic_pass(session, txn):
 
     assert decision.agent_mode is AgentMode.DETERMINISTIC_FALLBACK
     assert sorted(decision.signals_pulled) == [
-        "call_forwarding", "device_status", "location_verification", "sim_swap"]
+        "call_forwarding", "device_reachability", "device_status", "device_swap",
+        "location_verification", "sim_swap"]
     assert decision.outcome is DecisionOutcome.INTERVENE
     assert decision.summary, "a decision without an explanation is not usable"
 
@@ -225,7 +247,8 @@ async def test_camara_outage_still_produces_a_decision(session, txn):
 @respx.mock
 async def test_total_failure_still_returns_a_decision(session, txn):
     """Model down AND network down. Worst case; still no exception to the caller."""
-    for path in (f"{CF}/unconditional-call-forwardings", f"{SS}/check", ROAM, LOC):
+    for path in (f"{CF}/unconditional-call-forwardings", f"{SS}/check", ROAM, LOC,
+                 f"{DSWAP}/check", REACH):
         respx.post(f"{BASE_URL}{path}").respond(500, json={"detail": "down"})
 
     decision = await evaluate(session, txn.id, context(), model=exploding_model())
@@ -349,6 +372,22 @@ async def test_fallback_tops_up_signals_the_agent_already_started(session, txn):
 
     assert decision.agent_mode is AgentMode.DETERMINISTIC_FALLBACK
     assert sorted(decision.signals_pulled) == [
-        "call_forwarding", "device_status", "location_verification", "sim_swap"]
+        "call_forwarding", "device_reachability", "device_status", "device_swap",
+        # Retrieval joins the set only because verification came back FALSE: once the
+        # network says the customer is somewhere else, the analyst who picks this up
+        # needs to know where, and "FALSE" does not tell them.
+        "location_retrieval", "location_verification", "sim_swap"]
     assert decision.signals_pulled.count("call_forwarding") == 1, "no signal pulled twice"
     assert decision.outcome is DecisionOutcome.DECLINE
+
+
+@respx.mock
+async def test_a_present_customer_is_never_located(session, txn):
+    """Retrieval discloses a position rather than confirming one, so it is reserved for
+    the case where we already have evidence the customer is somewhere they should not
+    be. A held payment to a customer sitting at home must not trigger it."""
+    mock_sandbox(location="TRUE")
+    decision = await evaluate(session, txn.id, context(), model=exploding_model())
+
+    assert "location_retrieval" not in decision.signals_pulled
+    assert decision.outcome is DecisionOutcome.INTERVENE

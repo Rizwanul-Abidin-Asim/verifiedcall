@@ -31,6 +31,35 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.6-flash"
     agent_timeout_s: float = 12.0  # Groq slows under burst; 8s tripped the fallback
 
+    # If the primary provider is rate-limited or down, try this one before giving up on
+    # reasoning altogether. Measured 2026-09-12: Groq answers in ~7.5s and is genuinely
+    # selective (3 of 7 signals); Gemini answers in ~25s and pulls everything. So Groq
+    # leads on both speed and judgement, and Gemini exists to keep an agent in the loop
+    # on the day Groq's free tier says no — a slow analyst beats no analyst.
+    # Set to "" to disable the second attempt.
+    llm_fallback_provider: str = "gemini"
+    llm_fallback_timeout_s: float = 28.0
+
+    # The model that talks to the customer on the phone. Deliberately NOT the same one
+    # that scores the payment.
+    #
+    # The risk agent runs on Groq's gpt-oss-120b and is excellent there: it answers in
+    # about 7 seconds and genuinely picks 3 of 7 signals. But it is a *reasoning* model,
+    # and inside a real-time voice loop that turned out to be unusable. Two defects,
+    # both documented by other people rather than guessed at by us:
+    #
+    #   - it returns silent empty completions with no error, which Vapi cannot speak.
+    #     Observed on our own calls: the model billed 250 completion tokens while
+    #     ElevenLabs synthesised 0 characters, and the call died with
+    #     endedReason=silence-timed-out.
+    #   - roughly 4 requests in 10 leak reasoning tokens into the spoken output, which
+    #     is where "press 1 if you're worth" and "and as I was saying" came from.
+    #
+    # Groq currently offers no non-reasoning model we could swap to, so the voice leg
+    # moves to Gemini, which is already part of this project's stack.
+    voice_llm_provider: str = "google"
+    voice_llm_model: str = "gemini-2.5-flash"
+
     # --- Voice ---
     vapi_api_key: str = ""
     vapi_phone_number_id: str = ""

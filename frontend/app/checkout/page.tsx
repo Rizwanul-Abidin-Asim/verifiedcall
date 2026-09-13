@@ -16,41 +16,67 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AmountPad, formatAmount } from "@/components/bank/AmountPad";
+import CheckingNetwork from "@/components/bank/CheckingNetwork";
+import Splash from "@/components/bank/Splash";
+import "./splash.css";
 import { SlideToSend } from "@/components/bank/SlideToSend";
+import AppConfirm from "@/components/AppConfirm";
 import { IncomingCall } from "@/components/IncomingCall";
 import { useDeviceLocation } from "@/components/useDeviceLocation";
-import { ApiError, evaluatePayment, getVoice, type Outcome } from "../../lib/api";
+import {
+  ApiError,
+  type ChannelAssessment,
+  evaluatePayment,
+  getVoice,
+  type Outcome,
+} from "../../lib/api";
 
-/** Signal numbers come from the measured sandbox matrix in docs/camara-findings.md. */
+/** Signal numbers come from the measured sandbox matrix in docs/camara-findings.md.
+ *
+ *  `persona` routes individual APIs to different sandbox numbers where no single number
+ *  can express the combination — see backend app/agent/personas.py. The response carries
+ *  a disclosure line whenever that happens, and the dashboard prints it. */
 const PROFILES = [
   {
     id: "clean",
     label: "All clear",
     signal: "+99999991001",
+    persona: "routine",
     note: "Every network check comes back clean.",
   },
   {
     id: "elsewhere",
     label: "Phone is somewhere else",
     signal: "+99999991000",
+    persona: "theft",
     note: "SIM swapped, calls forwarded, and the phone is not where this payment is.",
   },
   {
     id: "coerced",
-    label: "Phone is right here",
+    label: "Phone is right here, line is clean",
     signal: "+99999991004",
-    note: "Same bad signals, but the phone is exactly where the payment claims. The headline case.",
+    persona: "coercion_voice_open",
+    note: "Bad signals, but the phone is where the payment claims and her calls are not diverted. We ring her.",
   },
   {
-    id: "partial",
-    label: "Partial location match",
+    id: "diverted",
+    label: "Her calls are diverted",
+    signal: "+99999991000",
+    persona: "voice_compromised",
+    note: "Calls forwarded and SIM swapped, but the handset is still hers and still has data. We use the app, not the phone.",
+  },
+  {
+    id: "siege",
+    label: "Every route is barred",
     signal: "+99999991003",
-    note: "Not enough to decline, too much to wave through.",
+    persona: "silent_siege",
+    note: "Calls diverted, SIM and handset replaced, device unreachable. We do not attempt contact at all.",
   },
   {
     id: "outage",
     label: "Network outage",
     signal: "+99999990500",
+    persona: null,
     note: "Every network call fails. Proves the fallback and says so.",
   },
 ] as const;
@@ -78,13 +104,14 @@ const RECENT = [
 const BALANCE = 96420.55;
 
 type Screen = "home" | "send" | "review" | "result" | "cards" | "request";
-type Phase = "idle" | "deciding" | "calling" | "done" | "error";
+type Phase = "idle" | "deciding" | "calling" | "confirming" | "done" | "error";
 
 interface Decision {
   transaction_id: string;
   outcome: Outcome;
   risk_score: number;
   latency_ms: number;
+  channels: ChannelAssessment | null;
 }
 
 interface VoiceState {
@@ -107,6 +134,7 @@ export default function BankApp() {
   // Nothing on the home screen is decorative. Request adds a pending row to the
   // activity list, and the card can be frozen, so every button does what it says.
   const [recent, setRecent] = useState(RECENT);
+  const [balance, setBalance] = useState(BALANCE);
   const [frozen, setFrozen] = useState(false);
   const [reqPayee, setReqPayee] = useState<string>("ahmed");
   const [reqAmount, setReqAmount] = useState("");
@@ -118,9 +146,16 @@ export default function BankApp() {
   const [profileId, setProfileId] = useState<string>("coerced");
   const [drawer, setDrawer] = useState(false);
 
+  // The landing moment, once per open. Stable callback on purpose: Splash keys its
+  // five-second timers off this function, and a fresh arrow every render would reset
+  // them and the splash would never end.
+  const [splash, setSplash] = useState(true);
+  const dismissSplash = useCallback(() => setSplash(false), []);
+
   const [phase, setPhase] = useState<Phase>("idle");
   const [decision, setDecision] = useState<Decision | null>(null);
   const [voice, setVoice] = useState<VoiceState | null>(null);
+  const [appAnswer, setAppAnswer] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const polling = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -132,11 +167,43 @@ export default function BankApp() {
     : PAYEES.find((p) => p.id === payeeId) ?? PAYEES[0];
 
   const amountNumber = Number(amount || "0");
-  const amountOk = amountNumber > 0 && amountNumber <= BALANCE;
+  const amountOk = amountNumber > 0 && amountNumber <= balance;
   const payeeOk = !isNewPayee || (newName.trim().length > 1 && newIban.replace(/\s/g, "").length >= 15);
 
   const locationAnswered =
     location.stage === "granted" || location.stage === "denied" || location.stage === "unavailable";
+
+  // Money leaves the account only when the check clears, and the screen has to agree
+  // with that. Until now the balance was a constant: a payment could be approved, the
+  // customer told it had been sent, and the same figure sat there afterwards — which on
+  // a banking screen reads as the payment having failed.
+  //
+  // Keyed on the transaction id so it applies exactly once. This effect re-runs whenever
+  // the voice state polls, and without the guard a held-then-released payment would be
+  // deducted several times over.
+  const settled = useRef<string | null>(null);
+  useEffect(() => {
+    if (phase !== "done" || decision === null) return;
+    if (settled.current === decision.transaction_id) return;
+
+    const released =
+      decision.outcome === "approve" ||
+      voice?.outcome === "confirmed_legitimate" ||
+      appAnswer === false;
+    if (!released) return;
+
+    settled.current = decision.transaction_id;
+    setBalance((current) => current - amountNumber);
+    setRecent((previous) => [
+      {
+        name: payee.name,
+        when: "Just now",
+        amount: `−${formatAmount(amountNumber.toFixed(2))}`,
+        in: false,
+      },
+      ...previous,
+    ]);
+  }, [phase, decision, voice, appAnswer, amountNumber, payee.name]);
 
   const stopPolling = useCallback(() => {
     if (polling.current) {
@@ -148,12 +215,15 @@ export default function BankApp() {
 
   // The demo drawer can stage the headline case in one tap, but everything it fills in
   // stays editable. A judge who types their own amount gets a real decision on it.
+  // Fills in the payment, and deliberately leaves the network profile alone. There are
+  // several headline cases now — she is reachable, her calls are diverted, every route is
+  // barred — and they differ only in the profile, so clobbering it here made the drawer's
+  // own radio buttons do nothing.
   const stageHeadline = () => {
     setPayeeId("new");
     setNewName("Safe account");
     setNewIban("AE90 0999 0000 0000 0000 001");
     setAmount("42000");
-    setProfileId("coerced");
     setDrawer(false);
     setScreen("send");
   };
@@ -161,6 +231,7 @@ export default function BankApp() {
   const reset = () => {
     stopPolling();
     setPhase("idle");
+    setAppAnswer(null);
     setDecision(null);
     setVoice(null);
     setError(null);
@@ -184,6 +255,7 @@ export default function BankApp() {
         is_new_beneficiary: isNewPayee,
         customer_msisdn: "+971500000000",
         signal_msisdn: profile.signal,
+        persona: profile.persona,
         customer_locale: language,
         local_hour: new Date().getHours(),
         device_latitude: location.latitude,
@@ -197,6 +269,14 @@ export default function BankApp() {
       if (result.outcome !== "intervene") {
         setPhase("done");
         setScreen("result");
+        return;
+      }
+
+      // The network decides how we reach her, not us. Ringing a diverted line would put
+      // the bank's own voice in the fraudster's hands, so when voice is barred we drop
+      // to the app instead and never place the call at all.
+      if (result.channels?.preferred === "app_push") {
+        setPhase("confirming");
         return;
       }
 
@@ -234,6 +314,13 @@ export default function BankApp() {
 
   return (
     <main className="bk">
+      {/* Presentational only. On a laptop the app sits inside a device frame, and the
+          overlays below — review sheet, in-app prompt, security call — are positioned
+          inside that frame rather than over the presenter's whole screen. On a phone the
+          frame has no visual and the overlays stay full-bleed. Nothing here changes what
+          any of them do. */}
+      <div className="bk-device">
+      {splash && <Splash onDone={dismissSplash} />}
       <div className="bk-phone" data-screen={screen}>
         {/* ------------------------------------------------------------ home */}
         <section className="bk-screen bk-home" aria-hidden={screen !== "home"}>
@@ -251,7 +338,7 @@ export default function BankApp() {
             <p className="bk-card-iban">AE07 0331 •••• •••• 4429</p>
             <p className="bk-card-balance">
               <span className="bk-card-ccy">AED</span>
-              {formatAmount(BALANCE.toFixed(2))}
+              {formatAmount(balance.toFixed(2))}
             </p>
           </div>
 
@@ -291,8 +378,8 @@ export default function BankApp() {
             {drawer && (
               <div className="bk-drawer-body">
                 <button className="bk-stage" onClick={stageHeadline}>
-                  Stage the headline case
-                  <small>42,000 AED to a new "safe account", phone right here</small>
+                  Fill in the headline payment
+                  <small>42,000 AED to a new &quot;safe account&quot;. Pick the network profile below.</small>
                 </button>
                 <p className="bk-drawer-label">Network profile for the next payment</p>
                 {PROFILES.map((p) => (
@@ -386,7 +473,7 @@ export default function BankApp() {
             disabled={!amountOk || !payeeOk}
             onClick={() => setScreen("review")}
           >
-            {amountNumber > BALANCE ? "That's more than you have" : "Review"}
+            {amountNumber > balance ? "That's more than you have" : "Review"}
           </button>
         </section>
 
@@ -494,6 +581,7 @@ export default function BankApp() {
               voice={voice}
               amount={amountNumber}
               payee={payee.name}
+              appAnswer={appAnswer}
               onDone={reset}
             />
           )}
@@ -541,20 +629,42 @@ export default function BankApp() {
 
             {phase === "error" && <p className="bk-error">{error}</p>}
 
-            <SlideToSend
-              label={`Slide to send ${formatAmount(amountNumber.toFixed(2))} AED`}
-              disabled={!locationAnswered}
-              busy={phase === "deciding" || phase === "calling"}
-              onSend={send}
-            />
-            {!locationAnswered && (
-              <p className="bk-hint">Answer the location prompt above to unlock sending.</p>
-            )}
-            {phase === "calling" && (
-              <p className="bk-hint">Security check in progress. Answer the call to continue.</p>
+            {phase === "deciding" || phase === "calling" ? (
+              <CheckingNetwork />
+            ) : (
+              <>
+                <SlideToSend
+                  label={`Slide to send ${formatAmount(amountNumber.toFixed(2))} AED`}
+                  disabled={!locationAnswered}
+                  busy={false}
+                  onSend={send}
+                />
+                {!locationAnswered && (
+                  <p className="bk-hint">
+                    Answer the location prompt above to unlock sending.
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>
+      )}
+
+      {phase === "confirming" && decision && (
+        <AppConfirm
+          amount={amountNumber.toFixed(2)}
+          currency="AED"
+          payee={payee.name}
+          reason={
+            decision.channels?.verdicts.find((v) => v.channel === "voice")?.reason ??
+            "We could not use a phone call for this check."
+          }
+          onAnswer={(coerced) => {
+            setAppAnswer(coerced);
+            setPhase("done");
+            setScreen("result");
+          }}
+        />
       )}
 
       {callIsUp && decision && (
@@ -564,6 +674,7 @@ export default function BankApp() {
           beneficiary={payee.name}
         />
       )}
+      </div>
     </main>
   );
 }
@@ -604,17 +715,26 @@ function Outcome({
   voice,
   amount,
   payee,
+  appAnswer,
   onDone,
 }: {
   decision: Decision;
   voice: VoiceState | null;
   amount: number;
   payee: string;
+  /** What she tapped on the in-app prompt: true = someone is guiding her. Null when the
+   *  check went down a different channel. */
+  appAnswer: boolean | null;
   onDone: () => void;
 }) {
   const sent =
-    decision.outcome === "approve" || voice?.outcome === "confirmed_legitimate";
-  const stopped = decision.outcome === "decline" || voice?.outcome === "scam_detected";
+    decision.outcome === "approve" ||
+    voice?.outcome === "confirmed_legitimate" ||
+    appAnswer === false;
+  const stopped =
+    decision.outcome === "decline" ||
+    voice?.outcome === "scam_detected" ||
+    appAnswer === true;
   const tone = sent ? "sent" : stopped ? "stopped" : "held";
 
   const title = sent

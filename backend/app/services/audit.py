@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.camara.models import SignalResult, SignalSource
 from app.db.models import (
+    AnalystAction,
+    _now,
     Decision,
     DecisionOutcome,
     SignalCall,
@@ -60,6 +62,7 @@ async def record_decision(
     reasoning_trace: list[dict],
     total_latency_ms: float,
     used_fallback: bool = False,
+    channel_assessment: dict | None = None,
 ) -> Decision:
     """Persist the agent's conclusion and the reasoning that produced it."""
     if not 0 <= risk_score <= 100:
@@ -72,6 +75,7 @@ async def record_decision(
         reasoning_trace=reasoning_trace,
         total_latency_ms=round(total_latency_ms, 2),
         used_fallback=used_fallback,
+        channel_assessment=channel_assessment,
     )
     session.add(record)
     await session.flush()
@@ -88,3 +92,40 @@ async def record_transaction(session: AsyncSession, **fields) -> Transaction:
     log.info("audit.transaction id=%s amount=%s new_beneficiary=%s",
              txn.id, txn.amount, txn.is_new_beneficiary)
     return txn
+
+
+async def record_analyst_review(
+    session: AsyncSession,
+    decision: Decision,
+    action: AnalystAction,
+    reason: str,
+) -> Decision:
+    """Record what a human did about a decision the agent had already made.
+
+    Writes alongside `outcome`, never over it. The agent's verdict is evidence of what
+    the system concluded, and a release is only meaningful next to the hold it reversed
+    — collapsing the two into one field would leave a fraud team unable to audit its own
+    overrides, which is the one dataset that tells them whether the agent is calibrated.
+
+    A decision may be reviewed once. A second review is refused rather than silently
+    replacing the first, because money has already moved on the strength of it.
+    """
+    if decision.analyst_action is not None:
+        raise ValueError(
+            f"Decision {decision.id} was already {decision.analyst_action.value} by an "
+            f"analyst at {decision.analyst_reviewed_at:%Y-%m-%d %H:%M}"
+        )
+
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("An analyst override must say why.")
+
+    decision.analyst_action = action
+    decision.analyst_reason = reason
+    decision.analyst_reviewed_at = _now()
+    await session.flush()
+
+    # Logged at warning: an override is rare and is the thing worth finding in a log.
+    log.warning("audit.analyst_override decision=%s agent_said=%s analyst_did=%s why=%s",
+                decision.id, decision.outcome.value, action.value, reason)
+    return decision

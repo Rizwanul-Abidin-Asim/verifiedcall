@@ -19,6 +19,7 @@ import time
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
+from app.agent.channels import assess_channels
 from app.agent.prompts import SYSTEM_PROMPT, build_user_prompt
 from app.agent.schemas import (
     AgentMode,
@@ -35,7 +36,10 @@ from app.agent.scoring import (
 )
 from app.agent.tools import ALL_TOOLS, AgentDeps
 from app.camara.call_forwarding import check_call_forwarding
+from app.camara.device_reachability import check_reachability
 from app.camara.device_status import check_device_status
+from app.camara.device_swap import check_device_swap
+from app.camara.location_retrieval import retrieve_location
 from app.camara.location_verification import centre_for, verify_location
 from app.camara.sim_swap import check_sim_swap
 from app.config import settings
@@ -47,10 +51,13 @@ log = logging.getLogger("agent")
 CAUTION_ORDER = [DecisionOutcome.APPROVE, DecisionOutcome.INTERVENE, DecisionOutcome.DECLINE]
 
 
-def build_model() -> Model:
-    """Resolve the configured provider. Swappable so a rate limit mid-pitch is a
-    one-line .env change, and so we can compare how selective each model is."""
-    provider = settings.llm_provider.lower()
+def build_model(provider: str | None = None) -> Model:
+    """Resolve a provider by name, defaulting to the configured primary.
+
+    Swappable so a rate limit mid-pitch is a one-line .env change, so we can compare how
+    selective each model is, and so evaluate() can walk a chain of them.
+    """
+    provider = (provider or settings.llm_provider).lower()
 
     if provider == "groq":
         from pydantic_ai.models.groq import GroqModel
@@ -105,6 +112,27 @@ def more_cautious(a: DecisionOutcome, b: DecisionOutcome) -> DecisionOutcome:
     return max(a, b, key=CAUTION_ORDER.index)
 
 
+def _provider_chain(injected: Model | None) -> list[tuple[str, float]]:
+    """Which models to try, in order, and how long to give each.
+
+    A caller that injects a model — every test does — gets exactly that model and one
+    attempt. Retrying an injected test double against a different provider would make
+    failure tests pass for the wrong reason.
+
+    The fallback provider gets a longer budget than the primary on purpose. It is only
+    reached when the primary is already unavailable, and at that point the choice is
+    between a slow answer from a reasoning model and no reasoning at all.
+    """
+    if injected is not None:
+        return [(settings.llm_provider, settings.agent_timeout_s)]
+
+    chain = [(settings.llm_provider, settings.agent_timeout_s)]
+    fallback = settings.llm_fallback_provider.strip().lower()
+    if fallback and fallback != settings.llm_provider.lower():
+        chain.append((fallback, settings.llm_fallback_timeout_s))
+    return chain
+
+
 async def _pull_missing_signals(deps: AgentDeps) -> None:
     """Deterministic path: make sure every signal is present, concurrently.
 
@@ -112,20 +140,34 @@ async def _pull_missing_signals(deps: AgentDeps) -> None:
     collected one or two signals, and an earlier version skipped this entirely whenever
     anything had been collected, which left the fallback deciding on partial evidence.
     """
-    msisdn = deps.context.signal_msisdn
     latitude, longitude = centre_for(deps.device_latitude, deps.device_longitude,
                                      deps.expected_city)
     already = {s.api_name for s in deps.collected}
 
+    def number(api_name: str) -> str:
+        return deps.msisdn_for(api_name)
+
+    loc_msisdn = number("location_verification")
     wanted = [
-        ("call_forwarding", check_call_forwarding(msisdn), {"phoneNumber": msisdn}),
-        ("sim_swap", check_sim_swap(msisdn), {"phoneNumber": msisdn, "maxAge": 240}),
-        ("device_status", check_device_status(msisdn), {"device": {"phoneNumber": msisdn}}),
-        ("location_verification", verify_location(msisdn, latitude, longitude),
-         {"device": {"phoneNumber": msisdn},
+        ("call_forwarding", check_call_forwarding(number("call_forwarding")),
+         {"phoneNumber": number("call_forwarding")}),
+        ("sim_swap", check_sim_swap(number("sim_swap")),
+         {"phoneNumber": number("sim_swap"), "maxAge": 240}),
+        ("device_status", check_device_status(number("device_status")),
+         {"device": {"phoneNumber": number("device_status")}}),
+        ("location_verification", verify_location(loc_msisdn, latitude, longitude),
+         {"device": {"phoneNumber": loc_msisdn},
           "area": {"areaType": "CIRCLE",
                    "center": {"latitude": latitude, "longitude": longitude},
                    "radius": 50_000}}),
+        # Both of these feed channel routing rather than the score. The fallback path has
+        # to pull them too, or a decision taken while the model is down would have no
+        # idea whether it could reach the customer and would default to phoning a line
+        # that may be diverted.
+        ("device_swap", check_device_swap(number("device_swap")),
+         {"phoneNumber": number("device_swap"), "maxAge": 240}),
+        ("device_reachability", check_reachability(number("device_reachability")),
+         {"device": {"phoneNumber": number("device_reachability")}}),
     ]
     pending = [(name, coro, payload) for name, coro, payload in wanted if name not in already]
     for _, coro, _ in [w for w in wanted if w[0] in already]:
@@ -160,13 +202,40 @@ async def _ensure_location_before_acting(deps: AgentDeps) -> bool:
 
     latitude, longitude = centre_for(deps.device_latitude, deps.device_longitude,
                                      deps.expected_city)
+    msisdn = deps.msisdn_for("location_verification")
     log.info("agent.mandatory_evidence pulling location check; score=%d", score)
-    signal = await verify_location(deps.context.signal_msisdn, latitude, longitude)
+    signal = await verify_location(msisdn, latitude, longitude)
     await deps.capture(signal, {
-        "device": {"phoneNumber": deps.context.signal_msisdn},
+        "device": {"phoneNumber": msisdn},
         "area": {"areaType": "CIRCLE",
                  "center": {"latitude": latitude, "longitude": longitude},
                  "radius": 50_000}})
+    return True
+
+
+async def _locate_before_declining(deps: AgentDeps) -> bool:
+    """Once the network says the customer is NOT where the payment came from, find out
+    where they actually are.
+
+    Verification answers yes or no against an area we supplied. It is the right call for
+    the decision and the wrong one for the case file: a declined payment goes to a human,
+    and "verificationResult: FALSE" is not something a person can act on, while "the
+    network puts the handset in Budapest" is.
+
+    Retrieval is the more invasive of the two — it discloses a position rather than
+    confirming one — so it is made here and nowhere else: only after we already hold
+    positive evidence the customer is somewhere they should not be. One extra ~300ms call
+    on a payment we are refusing anyway.
+    """
+    if not customer_appears_absent(deps.collected):
+        return False
+    if any(s.api_name == "location_retrieval" for s in deps.collected):
+        return False
+
+    msisdn = deps.msisdn_for("location_retrieval")
+    log.info("agent.locating absent customer for the case file")
+    signal = await retrieve_location(msisdn)
+    await deps.capture(signal, {"device": {"phoneNumber": msisdn}, "maxAge": 3600})
     return True
 
 
@@ -174,7 +243,11 @@ def _assemble(deps: AgentDeps, opinion: AgentOpinion | None, started: float,
               mode: AgentMode, extra_steps: list[ReasoningStep]) -> RiskDecision:
     """Shared tail: score what was collected and produce the final decision."""
     score, trace = build_trace(deps.context, deps.collected)
-    scored_outcome, scored_rationale = choose_outcome(score, deps.collected)
+
+    # Where could we reach this customer, if we decided to? Assessed from whatever the
+    # agent actually pulled — a signal it skipped reads as "unproven", never as "safe".
+    channels = assess_channels(deps.collected)
+    scored_outcome, scored_rationale = choose_outcome(score, deps.collected, channels)
 
     outcome = scored_outcome
     disagreement = None
@@ -207,6 +280,31 @@ def _assemble(deps: AgentDeps, opinion: AgentOpinion | None, started: float,
                  opinion.recommended_outcome, scored_outcome, outcome)
 
     trace = extra_steps + trace
+
+    # The channel reasoning goes into the trace as its own step. It is the part of the
+    # decision a fraud analyst is most likely to be asked about — "why didn't you just
+    # ring her?" — so it should be readable without opening the code.
+    if channels.signals_used:
+        blocked = [v for v in channels.verdicts if v.blocked_by]
+        if channels.no_safe_channel:
+            observed = "No channel to this customer can be trusted"
+        elif channels.preferred is not None:
+            observed = (f"Reaching the customer by {channels.preferred.value}"
+                        + (f", not {'/'.join(v.channel.value for v in blocked)}"
+                           if blocked else ""))
+        else:
+            # Some doors are shut and the rest were never checked. Say exactly that:
+            # "we could not confirm a safe route" is a different claim from "there is
+            # none", and only the second one justifies refusing to contact anybody.
+            observed = ("No channel confirmed safe, but not all were checked"
+                        + (f" (closed: {'/'.join(v.channel.value for v in blocked)})"
+                           if blocked else ""))
+        trace.append(ReasoningStep(
+            step=len(trace) + 1, kind="assessment", observed=observed,
+            rationale=channels.strategy + "".join(
+                f" {v.channel.value.upper()}: {v.reason}" for v in blocked),
+            running_score=score))
+
     trace.append(ReasoningStep(
         step=len(trace) + 1, kind="assessment",
         observed=f"Final score {score} of 100 -> {outcome.value}",
@@ -227,6 +325,7 @@ def _assemble(deps: AgentDeps, opinion: AgentOpinion | None, started: float,
         used_fallback=any(s.is_fallback for s in deps.collected),
         agent_mode=mode,
         disagreement=disagreement,
+        channels=channels,
     )
 
 
@@ -238,37 +337,53 @@ async def evaluate(
     expected_city: str = "AE-DXB",
     device_latitude: float | None = None,
     device_longitude: float | None = None,
+    persona: object | None = None,
 ) -> RiskDecision:
     """Assess one transaction. Always returns a decision — never raises."""
     started = time.perf_counter()
     deps = AgentDeps(session=session, transaction_id=transaction_id, context=context,
                      expected_city=expected_city, device_latitude=device_latitude,
-                     device_longitude=device_longitude)
+                     device_longitude=device_longitude, persona=persona)
 
-    try:
-        agent = build_agent(model)
-        result = await asyncio.wait_for(
-            agent.run(build_user_prompt(context.describe()), deps=deps),
-            timeout=settings.agent_timeout_s,
-        )
-        opinion: AgentOpinion = result.output
-        completed = await _ensure_location_before_acting(deps)
-        note = ReasoningStep(
-            step=0, kind="context",
-            observed=f"Agent chose to pull {len(deps.collected)} of 4 available signals",
-            rationale=opinion.why_these_signals + (
-                " The policy engine then added the location check, because this payment "
-                "was going to be held either way and location is what decides whether a "
-                "held payment is declined or verified by phone." if completed else ""))
-        return _assemble(deps, opinion, started, AgentMode.LLM, [note])
+    # Try each provider in turn before giving up on reasoning. The deterministic engine
+    # reaches the right answer, but it reaches it by pulling everything and scoring it,
+    # which is a rules engine — the thing this project claims not to be. So a slow second
+    # analyst is worth one more attempt before we drop to that.
+    for attempt, (provider, timeout) in enumerate(_provider_chain(model), start=1):
+        try:
+            agent = build_agent(model if model is not None else build_model(provider))
+            result = await asyncio.wait_for(
+                agent.run(build_user_prompt(context.describe()), deps=deps),
+                timeout=timeout,
+            )
+            opinion: AgentOpinion = result.output
+            completed = await _ensure_location_before_acting(deps)
+            await _locate_before_declining(deps)
+            switched = (
+                f" The primary model was unavailable, so this assessment was written by "
+                f"the {provider} model instead." if attempt > 1 else "")
+            note = ReasoningStep(
+                step=0, kind="context",
+                observed=f"Agent chose to pull {len(deps.collected)} of "
+                         f"{len(ALL_TOOLS)} available signals",
+                rationale=opinion.why_these_signals + (
+                    " The policy engine then added the location check, because this "
+                    "payment was going to be held either way and location is what "
+                    "decides whether a held payment is declined or verified by phone."
+                    if completed else "") + switched)
+            return _assemble(deps, opinion, started, AgentMode.LLM, [note])
 
-    except Exception as exc:  # noqa: BLE001 — a live demo must not surface a stack trace
-        log.warning("agent.llm_unavailable falling back to deterministic path: %r", exc)
+        except Exception as exc:  # noqa: BLE001 — a live demo must not show a stack trace
+            log.warning("agent.provider_failed provider=%s attempt=%d: %r",
+                        provider, attempt, exc)
 
-    # The model is unavailable, slow, or returned something unusable. Pull everything
+    log.warning("agent.llm_unavailable every provider failed; scoring deterministically")
+
+    # Every model is unavailable, slow, or returned something unusable. Pull everything
     # and score it. Slower and less selective, but it always produces an answer.
     try:
         await _pull_missing_signals(deps)
+        await _locate_before_declining(deps)
     except Exception as exc:  # noqa: BLE001
         log.error("agent.signals_unavailable %r", exc)
 

@@ -149,12 +149,24 @@ def test_call_forwarding_outweighs_sim_swap():
     assert forwarding_only > swap_only
 
 
-def test_clean_location_reduces_the_score():
+def test_clean_location_does_not_reduce_the_score():
+    """A device being where the payment claims is NOT evidence the payment is safe.
+
+    This test used to assert the opposite, and the opposite was wrong. A TRUE from
+    location verification is equally consistent with a normal payment, with a customer
+    being coached through it by a fraudster, with a customer under duress, and with
+    somebody else holding the handset. Letting it subtract from the score meant the
+    coercion case — our entire product thesis — scored *lower* than an unchecked one.
+
+    What TRUE does is decide which action to take, not how worried to be: it rules out
+    the customer being somewhere else, which turns a decline into a conversation. That
+    lives in choose_outcome(), not in the weights.
+    """
     with_check = build_trace(
         ctx("8000.00", new_payee=True),
         [LocationSignal(verification_result=LocationVerificationResult.TRUE, raw={})])[0]
     without_check = build_trace(ctx("8000.00", new_payee=True), [])[0]
-    assert with_check < without_check
+    assert with_check == without_check
 
 
 def test_absence_requires_positive_evidence():

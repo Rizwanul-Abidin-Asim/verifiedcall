@@ -30,7 +30,7 @@ from app.db.models import (
     VoiceStatus,
 )
 from app.voice.classify import Reply, assess
-from app.voice.scripts import SCRIPTS, Language, spoken_amount
+from app.voice.scripts import SCRIPTS, THANKS, Language, spoken_amount
 from app.voice.service import resolve_call
 from app.voice.vapi_client import (
     VAPI_BASE,
@@ -299,12 +299,33 @@ ELEVENLABS_VOICES = {
     "burt", "marissa", "andrea", "sarah", "phillip", "steve", "joseph", "myra",
     "paula", "ryan", "drew", "paul", "mrb", "matilda", "mark",
 }
-GROQ_MODELS = {
+# Per provider, pinned from Vapi's published schema.
+PROVIDER_MODELS = {
+    "groq": {
+        "openai/gpt-oss-20b", "openai/gpt-oss-120b", "deepseek-r1-distill-llama-70b",
+        "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192",
+        "llama3-70b-8192", "gemma2-9b-it", "moonshotai/kimi-k2-instruct-0905",
+        "meta-llama/llama-4-scout-17b-16e-instruct", "mistral-saba-24b",
+        "compound-beta", "compound-beta-mini",
+    },
+    "google": {
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+        "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    },
+}
+
+# Models that think out loud. They are fine behind an API where the reasoning arrives in
+# its own field and we read `content`; they are not fine driving a phone call, where
+# whatever the model emits is spoken to a frightened customer.
+#
+# gpt-oss-120b cost us three bad calls before we found out why: it returns silent empty
+# completions with no error (observed: 250 completion tokens billed, 0 characters
+# synthesised, endedReason=silence-timed-out) and leaks reasoning into the spoken text
+# in roughly 4 requests out of 10 — which is where "press 1 if you're worth" came from.
+REASONING_MODELS = {
     "openai/gpt-oss-20b", "openai/gpt-oss-120b", "deepseek-r1-distill-llama-70b",
-    "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192",
-    "llama3-70b-8192", "gemma2-9b-it", "moonshotai/kimi-k2-instruct-0905",
-    "meta-llama/llama-4-scout-17b-16e-instruct", "mistral-saba-24b",
-    "compound-beta", "compound-beta-mini",
+    "o1-mini", "o3-mini", "o4-mini", "gemini-2.0-flash-thinking-exp",
 }
 
 
@@ -318,8 +339,15 @@ async def test_every_language_builds_an_assistant_the_provider_accepts(language)
 
     assert assistant["transcriber"]["language"] in DEEPGRAM_LANGUAGES
     assert assistant["voice"]["voiceId"] in ELEVENLABS_VOICES
-    assert assistant["model"]["model"] in GROQ_MODELS
-    assert assistant["model"]["provider"] == "groq"
+
+    provider = assistant["model"]["provider"]
+    model = assistant["model"]["model"]
+    assert provider in PROVIDER_MODELS, f"{provider} is not a provider we have pinned"
+    assert model in PROVIDER_MODELS[provider], f"{provider} does not offer {model}"
+
+    # The guard that actually matters, and the one we learned the hard way.
+    assert model not in REASONING_MODELS, (
+        f"{model} thinks out loud, and on a call the customer hears it think")
 
 
 @pytest.mark.parametrize("language", list(Language))
@@ -543,32 +571,48 @@ async def test_the_opening_ends_by_asking_the_first_question(language):
 
 
 @pytest.mark.parametrize("language", list(Language))
-async def test_the_model_is_told_the_first_question_is_already_asked(language):
-    """Otherwise it repeats question one and the customer answers it twice."""
-    assistant = build_assistant(
-        SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
-    system = assistant["model"]["messages"][0]["content"]
-    assert "Question 1 was already asked" in system
-    # All three still listed, so the model knows what two and three are.
-    for question in SCRIPTS[language].questions:
-        assert question.text in system
+async def test_the_model_can_only_say_lines_we_wrote(language):
+    """The model picks a line; it never composes one.
 
-
-@pytest.mark.parametrize("language", list(Language))
-async def test_the_model_is_forbidden_from_ending_before_question_three(language):
-    """A real call: question 2 answered, then "Goodbye." Question 3 never asked.
-
-    The extractor correctly returned unclear for a question nobody heard and the
-    payment went to a human, which is the safe outcome, but the assistant had been told
-    "then ask question 3" and ignored it. The rule is now the loudest thing in the
-    prompt and the model samples at zero temperature.
+    Asked to "ask these questions in order" it paraphrased them, added filler, mangled a
+    question into "press 1 if you're worth", and re-asked one it already had an answer
+    to. So the questions it may send are given verbatim and the prompt says the reply is
+    always one of them. Question 1 is deliberately absent: it is in firstMessage, and
+    listing it again is how the customer ends up answering it twice.
     """
     assistant = build_assistant(
         SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
     system = assistant["model"]["messages"][0]["content"]
-    assert "ONLY after the customer has answered question 3" in system
-    assert "Ending before question 3 is answered is a serious error" in system
+    questions = SCRIPTS[language].questions
+
+    assert questions[0].text in assistant["firstMessage"]
+    assert questions[0].text not in system
+    for question in questions[1:]:
+        assert question.text in system
+    assert THANKS[language] in system
+    assert "always exactly one of these lines" in system
+    assert "Never send anything that is not one of those lines" in system
+
+
+@pytest.mark.parametrize("language", list(Language))
+async def test_the_closing_comes_after_every_question(language):
+    """A real call: question 2 answered, then "Goodbye." Question 3 never asked.
+
+    Ordering used to be enforced by telling the model it must not end early, which it
+    ignored. It is now enforced by position — the thanks is the LAST line in the list
+    and the prompt sends lines in order — so ending early would mean skipping a line
+    rather than disobeying a rule.
+    """
+    assistant = build_assistant(
+        SCRIPTS[language], spoken_amount(Decimal("42000.00")), "AED", "Direct transfer")
+    system = assistant["model"]["messages"][0]["content"]
+
+    positions = [system.index(q.text) for q in SCRIPTS[language].questions[1:]]
+    assert positions == sorted(positions), "questions must be listed in order"
+    assert system.index(THANKS[language]) > max(positions), "thanks must come last"
     assert assistant["model"]["temperature"] == 0
+    # The model cannot hang up by talking; it has to call the tool.
+    assert {"type": "endCall"} in assistant["model"]["tools"]
 
 
 @pytest.mark.parametrize("language", list(Language))

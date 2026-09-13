@@ -6,6 +6,7 @@ on stage and they must not drift.
 
 import asyncio
 import json
+import uuid
 
 import httpx
 import pytest
@@ -406,3 +407,93 @@ async def test_demo_mode_never_touches_the_network(client, monkeypatch):
     detail = (await client.get(f"/decisions/{body['decision_id']}")).json()
     assert all(s["source"] == "fallback" for s in detail["signal_calls"])
     assert all("DEMO_MODE" in (s["fallback_reason"] or "") for s in detail["signal_calls"])
+
+
+# ------------------------------------------------------ the human in the loop
+
+
+async def held_decision(client) -> dict:
+    """Submit a payment that gets held, and return its decision row."""
+    response = await client.post("/transactions/evaluate", json=payload(42000, AT_HOME))
+    body = response.json()
+    assert body["outcome"] != "approve", "this fixture needs a payment that was stopped"
+    return body
+
+
+async def test_an_analyst_can_release_a_payment_the_agent_stopped(client):
+    """The whole point of the override: a person knows something the network cannot."""
+    decision = await held_decision(client)
+
+    response = await client.post(
+        f"/decisions/{decision['decision_id']}/review",
+        json={"action": "released", "reason": "Customer called back on a verified line."})
+
+    assert response.status_code == 200
+    review = response.json()["analyst_review"]
+    assert review["action"] == "released"
+    assert review["reason"] == "Customer called back on a verified line."
+    assert review["reviewed_at"]
+
+
+async def test_the_override_does_not_erase_what_the_agent_decided(client):
+    """The rule this feature lives or dies by.
+
+    A release is only meaningful beside the hold it reversed. If releasing rewrote
+    `outcome`, a fraud team could never ask how often it overrules the agent, or whether
+    it was right to — which is the one dataset that tells them if the thing is
+    calibrated.
+    """
+    decision = await held_decision(client)
+    agent_outcome = decision["outcome"]
+
+    await client.post(
+        f"/decisions/{decision['decision_id']}/review",
+        json={"action": "released", "reason": "Verified by phone."})
+
+    after = (await client.get(f"/decisions/{decision['decision_id']}")).json()
+    assert after["outcome"] == agent_outcome, "the agent's verdict must survive intact"
+    assert after["risk_score"] == decision["risk_score"]
+    assert after["analyst_review"]["action"] == "released"
+
+
+async def test_a_decision_cannot_be_reviewed_twice(client):
+    """Money has already moved on the strength of the first answer."""
+    decision = await held_decision(client)
+    body = {"action": "released", "reason": "Verified by phone."}
+
+    first = await client.post(f"/decisions/{decision['decision_id']}/review", json=body)
+    assert first.status_code == 200
+
+    second = await client.post(
+        f"/decisions/{decision['decision_id']}/review",
+        json={"action": "blocked", "reason": "Changed my mind."})
+    assert second.status_code == 409
+    assert "already" in second.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("reason", ["", "  ", "no"])
+async def test_an_override_must_say_why(client, reason):
+    """An override with no reason is the one audit record that teaches nothing later."""
+    decision = await held_decision(client)
+    response = await client.post(
+        f"/decisions/{decision['decision_id']}/review",
+        json={"action": "released", "reason": reason})
+    assert response.status_code in (409, 422)
+
+
+async def test_reviewing_a_decision_that_does_not_exist_is_404(client):
+    response = await client.post(
+        f"/decisions/{uuid.uuid4()}/review",
+        json={"action": "released", "reason": "Verified by phone."})
+    assert response.status_code == 404
+
+
+async def test_the_docket_shows_a_reviewed_case_without_opening_it(client):
+    decision = await held_decision(client)
+    await client.post(
+        f"/decisions/{decision['decision_id']}/review",
+        json={"action": "blocked", "reason": "Customer confirmed the scam."})
+
+    rows = (await client.get("/decisions?limit=5")).json()["items"]
+    row = next(r for r in rows if r["decision_id"] == decision["decision_id"])
+    assert row["analyst_action"] == "blocked"

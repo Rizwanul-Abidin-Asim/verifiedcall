@@ -218,8 +218,13 @@ def test_real_assistant_definition_carries_the_script():
     # Bare "ar", not "ar-AE". The transcriber only accepts regional variants for
     # English; see the note on SPEECH_LOCALE and the schema test in test_voice_live.py.
     assert a["transcriber"]["language"] == "ar"
+    # Question 1 is in firstMessage, so the model is never given it to say. Everything
+    # it IS allowed to say has to be there verbatim — the model picks a line, it does
+    # not write one.
     system = a["model"]["messages"][0]["content"]
-    for q in script_for("ar").questions:
+    questions = script_for("ar").questions
+    assert questions[0].text in a["firstMessage"]
+    for q in questions[1:]:
         assert q.text in system
 
 

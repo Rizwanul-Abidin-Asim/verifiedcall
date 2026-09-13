@@ -1,0 +1,135 @@
+/* ------------------------------------------------------------- landing
+
+   Five seconds of the app's own name. Every timing below is anchored to that five:
+   the mark draws in the first second, the name lands by two, the tagline by three, and
+   the bar across the bottom is the actual clock. The whole thing lifts away in the last
+   half-second. On a laptop it lives inside the device frame like every other overlay. */
+
+.bk-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+  overflow: hidden;
+  cursor: pointer;
+  color: var(--bk-ink, #eef2fa);
+  background:
+    radial-gradient(70% 45% at 50% 0%, rgba(61, 220, 180, .18) 0%, transparent 65%),
+    linear-gradient(180deg, #0f1a30 0%, #0b1220 55%, #070c17 100%);
+  animation: bk-splash-in .45s ease-out both;
+}
+.bk-splash.is-leaving { animation: bk-splash-out .5s ease-in forwards; }
+
+@media (min-width: 48rem) {
+  .bk-device .bk-splash { position: absolute; }
+}
+
+@keyframes bk-splash-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bk-splash-out { to { opacity: 0; transform: scale(1.03); } }
+
+/* A slow breath of light behind the mark. */
+.bk-splash-glow {
+  position: absolute;
+  width: 22rem;
+  height: 22rem;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(61, 220, 180, .22) 0%, transparent 62%);
+  filter: blur(12px);
+  animation: bk-splash-breathe 4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes bk-splash-breathe {
+  0%, 100% { transform: scale(.9); opacity: .7; }
+  50%      { transform: scale(1.08); opacity: 1; }
+}
+
+.bk-splash-mark {
+  position: relative;
+  color: var(--bk-aqua, #3ddcb4);
+  filter: drop-shadow(0 12px 30px rgba(61, 220, 180, .45));
+}
+/* The shield outlines itself, then the tick lands inside it. */
+.bk-splash-shield {
+  stroke-dasharray: 170;
+  stroke-dashoffset: 170;
+  animation: bk-splash-draw 1s .15s cubic-bezier(.2, .8, .2, 1) forwards;
+}
+.bk-splash-tick {
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: bk-splash-draw .45s 1.05s cubic-bezier(.2, .8, .2, 1) forwards;
+}
+@keyframes bk-splash-draw { to { stroke-dashoffset: 0; } }
+
+.bk-splash-word {
+  position: relative;
+  margin: .4rem 0 0;
+  display: flex;
+  gap: .05em;
+  font-size: 2.6rem;
+  font-weight: 700;
+  letter-spacing: -.035em;
+  line-height: 1;
+}
+.bk-splash-word span { display: inline-block; opacity: 0; animation: bk-splash-rise .55s cubic-bezier(.2, .8, .2, 1) forwards; }
+.bk-splash-w1 { animation-delay: 1.15s; }
+.bk-splash-w2 { animation-delay: 1.45s; color: var(--bk-aqua, #3ddcb4); }
+@keyframes bk-splash-rise {
+  from { opacity: 0; transform: translateY(.45em); }
+  to   { opacity: 1; transform: none; }
+}
+
+.bk-splash-tag {
+  position: relative;
+  margin: 0;
+  max-width: 18rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--bk-muted, #8c98b4);
+  opacity: 0;
+  animation: bk-splash-rise .6s 2.3s cubic-bezier(.2, .8, .2, 1) forwards;
+}
+
+/* The five-second clock. */
+.bk-splash-bar {
+  position: relative;
+  margin-top: 1.4rem;
+  width: 9rem;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
+  overflow: hidden;
+}
+.bk-splash-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(61, 220, 180, .55), var(--bk-aqua, #3ddcb4));
+  transform-origin: left;
+  transform: scaleX(0);
+  animation: bk-splash-clock 5s linear forwards;
+}
+@keyframes bk-splash-clock { to { transform: scaleX(1); } }
+
+.bk-splash-skip {
+  position: relative;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--bk-faint, #5b6782);
+  opacity: 0;
+  animation: bk-splash-in .5s 1.6s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-splash-glow { animation: none; }
+  .bk-splash-shield, .bk-splash-tick { animation-duration: .01s; animation-delay: 0s; }
+  .bk-splash-word span, .bk-splash-tag, .bk-splash-skip { animation-duration: .01s; animation-delay: 0s; }
+}

@@ -19,7 +19,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
         />
       </head>
-      <body>
+      {/* Grammarly and similar extensions add attributes to <body> before React
+          hydrates (data-gr-ext-installed, data-new-gr-c-s-check-loaded), which React
+          reports as a hydration mismatch. It is the extension's markup, not ours, and
+          nothing we render depends on it. Scoped to this element only — it does not
+          silence mismatches anywhere else in the tree. */}
+      <body suppressHydrationWarning>
         <Nav />
         {children}
       </body>

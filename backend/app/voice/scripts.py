@@ -203,6 +203,22 @@ SCRIPTS: dict[Language, Script] = {
     Language.EN: _EN, Language.AR: _AR, Language.HI: _HI, Language.UR: _UR,
 }
 
+# What the assistant says once the third question is answered, before it hangs up.
+#
+# Neutral on purpose: at that moment the call knows the answers but not the decision,
+# which is made server-side from the extracted result. closing_released and
+# closing_held both state an outcome, so neither can be said here.
+#
+# Each string is lifted verbatim from the opening words of that language's
+# closing_released above rather than translated fresh, so nothing here is text no one
+# has reviewed.
+THANKS: dict[Language, str] = {
+    Language.EN: "Thank you.",
+    Language.AR: "شكراً لك.",
+    Language.HI: "धन्यवाद।",
+    Language.UR: "شکریہ۔",
+}
+
 # Spoken yes/no per language. Kept small on purpose: we only need to separate three
 # cases, and a short closed vocabulary is far more robust than open transcription.
 AFFIRMATIVE: dict[Language, tuple[str, ...]] = {

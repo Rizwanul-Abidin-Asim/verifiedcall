@@ -16,8 +16,11 @@ from datetime import UTC, datetime, timedelta
 
 from app.camara.models import (
     CallForwardingSignal,
+    DeviceSwapSignal,
+    LocationRetrievalSignal,
     LocationSignal,
     LocationVerificationResult,
+    ReachabilitySignal,
     RoamingSignal,
     SignalSource,
     SimSwapSignal,
@@ -26,6 +29,10 @@ from app.camara.models import (
 # Sandbox convention: ...1000 is the "bad" device, ...1001 the clean one.
 SWAPPED = "+99999991000"
 CLEAN = "+99999991001"
+
+# Budapest — what the sandbox actually returns for ...1000, and consistent with the
+# roaming signal's MCC 36 (HU). Kept accurate so a fallback tells the same story as live.
+SANDBOX_LAT, SANDBOX_LON = 47.48627616952785, 19.07915612501993
 
 
 def _recent(hours: int) -> datetime:
@@ -71,11 +78,50 @@ def _location(phone_number: str) -> LocationSignal:
     )
 
 
+def _device_swap(phone_number: str) -> DeviceSwapSignal:
+    swapped = phone_number == SWAPPED
+    return DeviceSwapSignal(
+        swapped=swapped,
+        latest_device_change=_recent(5) if swapped else None,
+        raw={"swapped": swapped},
+    )
+
+
+def _device_reachability(phone_number: str) -> ReachabilitySignal:
+    """Degrade toward SMS-only rather than toward "everything works".
+
+    A fallback that claimed DATA was available would send the intervention down a channel
+    we have not confirmed is open, and the customer would simply never see it. Assuming
+    less reachability makes us call rather than push — the safer error.
+    """
+    connectivity = ["SMS"] if phone_number == SWAPPED else ["SMS", "DATA"]
+    return ReachabilitySignal(
+        reachable=True,
+        connectivity=connectivity,
+        last_status_time=_recent(0),
+        raw={"reachable": True, "connectivity": connectivity},
+    )
+
+
+def _location_retrieval(phone_number: str) -> LocationRetrievalSignal:
+    away = phone_number == SWAPPED
+    return LocationRetrievalSignal(
+        latitude=SANDBOX_LAT if away else None,
+        longitude=SANDBOX_LON if away else None,
+        radius_m=1000 if away else None,
+        last_location_time=_recent(0),
+        raw={"area": {"areaType": "CIRCLE"}} if away else {},
+    )
+
+
 _BUILDERS = {
     "sim_swap": _sim_swap,
     "call_forwarding": _call_forwarding,
     "device_status": _device_status,
     "location_verification": _location,
+    "device_swap": _device_swap,
+    "device_reachability": _device_reachability,
+    "location_retrieval": _location_retrieval,
 }
 
 

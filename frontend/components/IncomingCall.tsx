@@ -55,6 +55,28 @@ export function IncomingCall({
   const ringtone = useRef<Ringtone | null>(null);
   const lastLine = useRef<HTMLDivElement | null>(null);
 
+  // The assistant config, fetched while the phone is still ringing.
+  //
+  // Answering used to do three things in sequence: ask for the microphone, fetch this,
+  // then open the WebRTC connection. The fetch is the only one that does not need the
+  // customer's tap, so it happens up front and the tap is left with the two that do.
+  const session = useRef<Awaited<ReturnType<typeof getWebSession>> | null>(null);
+  const sessionError = useRef<unknown>(null);
+
+  // Whether the call has finished, readable from inside the SDK's event handlers.
+  // State would be stale in those closures, and this decides whether an incoming error
+  // is a real failure or the noise of a finished call closing down.
+  const finished = useRef(false);
+  // Did the CUSTOMER ever say anything? Set only on a user transcript, never on the
+  // assistant's own.
+  //
+  // This used to flip on any final transcript, including the assistant's greeting —
+  // which meant every call was "far enough along" within two seconds, and a genuine
+  // failure after that was silently relabelled as a normal hangup. That is how three
+  // broken calls in a row showed the customer a tidy "ended" screen and told us
+  // nothing. A call where only the assistant ever spoke did not go fine.
+  const spoke = useRef(false);
+
   // Ring until answered. Generated rather than an audio file so there is no asset to
   // fetch and nothing to fail on a slow connection during a demo.
   useEffect(() => {
@@ -66,6 +88,16 @@ export function IncomingCall({
     ringtone.current = tone;
     return () => tone.stop();
   }, [stage]);
+
+  // Warm the session while it rings. A failure here is not surfaced yet — the customer
+  // has not asked for anything — so it is stored and re-raised if they do answer.
+  useEffect(() => {
+    let cancelled = false;
+    getWebSession(transactionId)
+      .then((s) => { if (!cancelled) session.current = s; })
+      .catch((err) => { if (!cancelled) sessionError.current = err; });
+    return () => { cancelled = true; };
+  }, [transactionId]);
 
   // A call takes over the screen, so the page behind it must not scroll underneath.
   useEffect(() => {
@@ -120,21 +152,62 @@ export function IncomingCall({
           "https link rather than an IP address."
         );
       }
-      const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Echo cancellation asked for explicitly rather than left to the browser.
+      //
+      // On a laptop with no headphones the assistant's own voice comes out of the
+      // speakers and straight back into the microphone. Deepgram then transcribes the
+      // assistant as if it were the customer, which is how a call ends up with the
+      // assistant answering itself, repeating a question it already asked, and
+      // "uh"-flecked fragments of its own script appearing in the transcript.
+      const permission = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       permission.getTracks().forEach((track) => track.stop());
 
-      const session = await getWebSession(transactionId);
-      const client = new Vapi(session.public_key);
+      // Already fetched while ringing, in the common case.
+      if (session.current === null && sessionError.current !== null) {
+        throw sessionError.current;
+      }
+      const ready = session.current ?? (await getWebSession(transactionId));
+      session.current = ready;
+
+      const client = new Vapi(ready.public_key);
       vapi.current = client;
 
       client.on("call-start", () => setStage("live"));
       client.on("call-end", () => {
+        finished.current = true;
         setStage("ended");
         onFinished?.();
       });
       client.on("speech-start", () => setSpeaking(true));
       client.on("speech-end", () => setSpeaking(false));
       client.on("error", (err: unknown) => {
+        // A Vapi web call runs on Daily, and Daily reports the teardown of a call that
+        // ENDED NORMALLY as "Meeting ended due to ejection: Meeting has ended". The
+        // assistant asking its three questions and then hanging up, exactly as
+        // instructed, produced that error — so a successful check was showing the
+        // customer a failure screen and inviting them to call back.
+        //
+        // So an ejection only counts as a failure if it arrives before the call ever
+        // got going. Once we have heard a transcript, or Vapi has already told us the
+        // call ended, it is the room closing and nothing more.
+        const raw = err instanceof Error ? err.message : String(err ?? "");
+        const teardown = /ejection|meeting has ended|meeting ended/i.test(raw);
+
+        // Only a call that actually got somewhere may treat an ejection as a normal
+        // close. Anything earlier is a real failure and the customer should be told.
+        if (teardown && (finished.current || spoke.current)) {
+          finished.current = true;
+          setStage((current) => (current === "error" ? current : "ended"));
+          onFinished?.();
+          return;
+        }
+
         setError(explain(err));
         setStage("error");
       });
@@ -144,6 +217,7 @@ export function IncomingCall({
           message.transcriptType === "final" &&
           typeof message.transcript === "string"
         ) {
+          if (String(message.role ?? "") === "user") spoke.current = true;
           setLines((prev) => [
             ...prev,
             { role: String(message.role ?? "user"), text: message.transcript as string },
@@ -152,10 +226,14 @@ export function IncomingCall({
       });
 
       const call = await client.start(
-        session.assistant as Parameters<Vapi["start"]>[0]
+        ready.assistant as Parameters<Vapi["start"]>[0]
       );
       if (!call?.id) {
-        throw new Error("The call connected but returned no id, so we cannot track it.");
+        // start() resolves without a call when the room never really opened — almost
+        // always because something else already holds the microphone, so the browser
+        // handed us a track with no audio on it. The old wording here said the call had
+        // connected, which sent you looking in the wrong place entirely.
+        throw new Error("no-call-id");
       }
       await reportWebCallStarted(transactionId, call.id);
     } catch (err) {
@@ -167,6 +245,8 @@ export function IncomingCall({
   }, [transactionId, onFinished]);
 
   const hangUp = useCallback(() => {
+    // Set before stop(), because stopping is what triggers the ejection error above.
+    finished.current = true;
     vapi.current?.stop();
     vapi.current = null;
     setStage("ended");
@@ -328,9 +408,10 @@ function explain(err: unknown): string {
 
   // Vapi ends a call it cannot hear. The wording below is the provider's; the
   // explanation is ours, because theirs does not say what to do about it.
-  if (/did-not-receive-customer-audio|no audio/i.test(raw)) {
-    return "We could not hear you, so the call ended. Check your microphone is not "
-      + "muted, then tap Answer again.";
+  if (/no-call-id|did-not-receive-customer-audio|no audio/i.test(raw)) {
+    return "We could not hear you, so the call stopped. Another browser tab or app is "
+      + "probably holding your microphone — close it, check the mic is not muted, then "
+      + "tap Answer again.";
   }
   if (/ejection|meeting has ended/i.test(raw)) {
     return "The call ended before we could finish. Tap Answer to try again.";

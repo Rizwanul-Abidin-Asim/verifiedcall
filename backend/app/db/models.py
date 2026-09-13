@@ -65,6 +65,19 @@ class SignalSourceKind(StrEnum):
     FALLBACK = "fallback"
 
 
+class AnalystAction(StrEnum):
+    """What a human did to a decision the system had already made.
+
+    Recorded ALONGSIDE the outcome, never over it. Overwriting `outcome` would make the
+    agent's decision unrecoverable, and "the agent held this payment and a person
+    released it anyway" is a more useful sentence than either half on its own — to a
+    fraud team reviewing its own overrides, and to a regulator asking who decided what.
+    """
+
+    RELEASED = "released"
+    BLOCKED = "blocked"
+
+
 class VoiceStatus(StrEnum):
     PENDING = "pending"
     RINGING = "ringing"
@@ -81,10 +94,18 @@ class VoiceChannel(StrEnum):
     rather than assumed. WEB carries the same conversation over the browser instead,
     with no carrier in the path. The distinction is recorded because a web call is not
     a phone call and the dashboard should not imply it was.
+
+    APP_PUSH and SMS are not voice at all. They are here because this table records how
+    we reached the customer, and once the channel is chosen by evidence rather than
+    assumed (see app/agent/channels.py) "how" stops being a question with only one
+    answer. An app-push intervention asks different questions from a call, because a tap
+    cannot reveal coercion the way a hesitation can.
     """
 
     PHONE = "phone"
     WEB = "web"
+    APP_PUSH = "app_push"
+    SMS = "sms"
 
 
 class VoiceOutcome(StrEnum):
@@ -171,6 +192,27 @@ class Decision(Base):
     total_latency_ms: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
     used_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    channel_assessment: Mapped[dict | None] = mapped_column(JSONColumn, nullable=True)
+    """Which ways of reaching this customer the network says are still trustworthy.
+
+    Nullable because decisions recorded before channel routing existed have no answer,
+    and a blank is more honest than a fabricated one. Shape is ChannelAssessment from
+    app/agent/channels.py."""
+
+    analyst_action: Mapped[AnalystAction | None] = mapped_column(
+        enum_column(AnalystAction, 16), nullable=True)
+    """What a human decided afterwards, if anyone looked. Null means nobody has."""
+
+    analyst_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Why they decided it. Required by the API when an action is recorded.
+
+    A fraud team's most valuable dataset is its own overrides: every release is either
+    the agent being too cautious or a customer who was talked round afterwards, and
+    without the reason there is no way to tell those apart later."""
+
+    analyst_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
 
     transaction: Mapped[Transaction] = relationship(back_populates="decision")
 

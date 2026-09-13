@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>VerifiedCall flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#f7f8fc;--surface:#fff;--ink:#0f1320;--muted:#515a70;--faint:#858ea6;
+    --line:#e4e8f2;--border:#ced5e5;
+    --open:#067a5b;--open-wash:#e4f3ee;--open-edge:#9fd5c5;
+    --barred:#b3182e;--barred-wash:#fbeaed;--barred-edge:#eab4bd;
+    --hold:#a05a00;--hold-wash:#fdf1e0;--hold-edge:#efcb96;
+    --live:#1e56e8;--live-wash:#e8eefe;--live-edge:#b7c8f8;
+    --ai:#5b2fd8;--ai-wash:#efeafd;--ai-edge:#c9b8f5;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+    --sans:"Archivo",ui-sans-serif,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.35;width:1800px}
+  .wrap{padding:28px 30px 22px;display:grid;gap:14px}
+  .lanes{display:grid;grid-template-columns:230px 24px 470px 24px 430px 24px 500px;align-items:start;gap:0}
+  .lane{display:grid;gap:12px}
+  .arrow{display:grid;place-items:center;height:120px;color:var(--faint);font-size:26px;font-weight:700}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:0 0 2px}
+  .box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,19,32,.04),0 10px 26px rgba(15,19,32,.05)}
+  .box h3{margin:0 0 4px;font-size:17px;font-weight:700;letter-spacing:-.01em}
+  .box p{margin:0;color:var(--muted);font-size:13.5px}
+  .box .m{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:5px;border:1px solid;margin-bottom:8px}
+  .tag.ai{color:var(--ai);border-color:var(--ai-edge);background:var(--ai-wash)}
+  .tag.det{color:var(--ink);border-color:var(--border);background:#eef1f8}
+  .tag.live{color:var(--live);border-color:var(--live-edge);background:var(--live-wash)}
+  .box.ai{border-color:var(--ai-edge);background:linear-gradient(180deg,#f8f5ff,#fff)}
+  .box.det{border-color:var(--border)}
+  .box.nac{border-color:var(--live-edge);background:linear-gradient(180deg,#f3f6fe,#fff);padding-bottom:12px}
+  .apis{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+  .api{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#fff}
+  .api b{display:block;font-size:13.5px}
+  .api .q{display:block;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:2px}
+  .api .role{display:inline-block;margin-top:5px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:1px 6px;border-radius:4px;border:1px solid}
+  .role.score{color:var(--hold);border-color:var(--hold-edge);background:var(--hold-wash)}
+  .role.route{color:var(--open);border-color:var(--open-edge);background:var(--open-wash)}
+  .role.explain{color:var(--live);border-color:var(--live-edge);background:var(--live-wash)}
+  .api.dead{border-style:dashed;opacity:.85;grid-column:1/-1;background:#f6f7fa}
+  .api.dead .role{color:var(--barred);border-color:var(--barred-edge);background:var(--barred-wash)}
+  .routes{display:grid;gap:7px;margin-top:10px}
+  .route{display:grid;grid-template-columns:52px 1fr auto;align-items:center;gap:10px;font-size:13px}
+  .route .lbl{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .route .track{height:2px;border-radius:2px;background:var(--open);position:relative}
+  .route.barred .track{background:repeating-linear-gradient(90deg,var(--barred) 0 6px,transparent 6px 11px)}
+  .route .mark{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:20px;height:20px;border-radius:50%;background:#fff;border:1.5px solid var(--open);color:var(--open);display:grid;place-items:center;font-family:var(--mono);font-size:12px}
+  .route.barred .mark{border-color:var(--barred);color:var(--barred)}
+  .route .by{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+  .route.barred .by{color:var(--barred)}
+  .out{display:grid;gap:9px}
+  .o{border:1px solid;border-radius:11px;padding:11px 14px;background:#fff}
+  .o b{display:block;font-size:15px}
+  .o span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+  .o.approve{border-color:var(--open-edge);background:var(--open-wash)} .o.approve b{color:var(--open)}
+  .o.hold{border-color:var(--hold-edge);background:var(--hold-wash)} .o.hold b{color:var(--hold)}
+  .o.decline{border-color:var(--barred-edge);background:var(--barred-wash)} .o.decline b{color:var(--barred)}
+  .o.siege{border-color:var(--barred);background:#fff} .o.siege b{color:var(--barred)}
+  .reach{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .r{border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:#fff}
+  .r b{display:block;font-size:13px} .r .m{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:3px}
+  .foot{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .foot .box p{font-size:13px}
+  .thresh{display:flex;gap:10px;margin-top:8px}
+  .thresh span{font-family:var(--mono);font-size:11.5px;padding:2px 8px;border-radius:5px;border:1px solid var(--border);color:var(--muted)}
+  .stagehead{display:flex;align-items:baseline;gap:8px}
+  .num{font-family:var(--mono);font-size:11px;color:#fff;background:var(--ink);border-radius:4px;padding:1px 6px}
+  .title{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
+  .title h1{margin:0;font-size:24px;letter-spacing:-.025em}
+  .title p{margin:0;color:var(--muted);font-size:14px}
+  .legend{display:flex;gap:14px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;border:1px solid;margin-right:5px;vertical-align:-1px}
+</style></head>
+<body><div class="wrap">
+  <div class="title">
+    <div><h1>VerifiedCall — how one payment is decided</h1><p>Every arrow is code that runs today. Every network call is a live request to Nokia Network as Code.</p></div>
+    <div class="legend">
+      <span><i style="border-color:var(--ai-edge);background:var(--ai-wash)"></i>AI agent stage</span>
+      <span><i style="border-color:var(--border);background:#eef1f8"></i>deterministic</span>
+      <span><i style="border-color:var(--hold-edge);background:var(--hold-wash)"></i>feeds the score</span>
+      <span><i style="border-color:var(--open-edge);background:var(--open-wash)"></i>decides the route</span>
+      <span><i style="border-color:var(--live-edge);background:var(--live-wash)"></i>explains the case</span>
+    </div>
+  </div>
+
+  <div class="lanes">
+    <!-- lane 1 -->
+    <div class="lane">
+      <p class="eyebrow">before any network call</p>
+      <div class="box"><h3>Payment submitted</h3><p>The gateway holds it. Nothing has moved.</p></div>
+      <div class="box det"><span class="tag det">free · 0 API calls</span><h3>Triage from the payment itself</h3><p class="m">amount · first-time payee · hour · did the phone share location</p><p style="margin-top:6px">Most payments stop here. 45,000 to a payee paid before: <b>0 checks, approved</b>.</p></div>
+    </div>
+    <div class="arrow">→</div>
+
+    <!-- lane 2 -->
+    <div class="lane">
+      <p class="eyebrow">stage 1 · which checks earn their latency</p>
+      <div class="box ai"><span class="tag ai">AI agent · Pydantic AI + Groq gpt-oss-120b</span>
+        <div class="stagehead"><h3>Risk agent picks the checks</h3></div>
+        <p>Bounded toolset of 7. Chooses which to pull, runs them in parallel, writes the analyst narrative. Measured: 3 of 7 on a coached payment, 0 on a routine one.</p>
+        <p class="m" style="margin-top:6px">fallback chain: Groq → Gemini 2.5 Flash → deterministic floor (always answers)</p>
+      </div>
+      <div class="box nac"><span class="tag live">Nokia Network as Code · 7 CAMARA APIs, all verified live</span>
+        <div class="apis">
+          <div class="api"><b>Call Forwarding Signal</b><span class="q">are her calls being diverted?</span><span class="role score">score 30 / 12</span> <span class="role route">closes voice</span></div>
+          <div class="api"><b>SIM Swap</b><span class="q">would a text land on her SIM?</span><span class="role score">score 22</span> <span class="role route">closes SMS</span></div>
+          <div class="api"><b>Device Swap</b><span class="q">is the app still on her handset?</span><span class="role score">score 12 (+18 with SIM)</span> <span class="role route">closes app</span></div>
+          <div class="api"><b>Device Reachability</b><span class="q">can we reach her — SMS, DATA, neither?</span><span class="role route">picks the door</span></div>
+          <div class="api"><b>Location Verification</b><span class="q">is the phone where the payment claims?</span><span class="role score">decides decline vs call</span></div>
+          <div class="api"><b>Device Roaming Status</b><span class="q">is she abroad and isolated?</span><span class="role score">score 8</span></div>
+          <div class="api"><b>Location Retrieval</b><span class="q">where is the handset, actually?</span><span class="role explain">explains a decline</span></div>
+          <div class="api dead"><b>Number Verification</b><span class="q">401 from a server: needs the handset's own consent over mobile data</span><span class="role">documented, not faked</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">→</div>
+
+    <!-- lane 3 -->
+    <div class="lane">
+      <p class="eyebrow">two questions, answered separately</p>
+      <div class="box det"><span class="tag det">deterministic · one reviewable table</span><h3>How worried should we be?</h3><p>Fixed weights turn facts into 0–100. The model never produces the number — a bank has to reproduce it for a regulator.</p>
+        <div class="thresh"><span>&lt; 30 approve</span><span>30–69 hold</span><span>≥ 70 + device elsewhere → decline</span></div>
+      </div>
+      <div class="box det"><span class="tag det">deterministic · channel trust</span><h3>Which door is still hers?</h3><p>A route the attacker controls is worse than no route at all.</p>
+        <div class="routes">
+          <div class="route barred"><span class="lbl">call</span><span class="track"><span class="mark">✕</span></span><span class="by">call forwarding</span></div>
+          <div class="route"><span class="lbl">app</span><span class="track"><span class="mark">→</span></span><span class="by">data path · handset unchanged</span></div>
+          <div class="route barred"><span class="lbl">text</span><span class="track"><span class="mark">✕</span></span><span class="by">SIM swap</span></div>
+        </div>
+        <p class="m" style="margin-top:8px">unchecked ≠ barred. Only a named signal can close a door.</p>
+      </div>
+    </div>
+    <div class="arrow">→</div>
+
+    <!-- lane 4 -->
+    <div class="lane">
+      <p class="eyebrow">what happens to the money</p>
+      <div class="out">
+        <div class="o approve"><b>Approve</b><span>under 30. About 1 second end to end.</span></div>
+        <div class="o hold"><b>Hold — and reach her on the safest open door</b>
+          <div class="reach">
+            <div class="r"><b>Voice call · preferred</b><span class="m">Vapi · Gemini 2.5 Flash · ElevenLabs · Deepgram</span><span class="m">EN · AR · HI · UR · keypad 1/2</span><span class="m">only a conversation catches coaching</span></div>
+            <div class="r"><b>In-app prompt · when voice is barred</b><span class="m">silent — the person on the phone can't hear it</span><span class="m">shows the sentence the scammer talks over</span></div>
+          </div>
+        </div>
+        <div class="o decline"><b>Decline</b><span>score ≥ 70 and the device is not where the payment claims — that is not her spending it. Location Retrieval then says where it is, for the analyst.</span></div>
+        <div class="o siege"><b>Every door barred → hold, contact no one, page a human</b><span>Being unreachable by her bank at this exact minute is the finding, not a failure.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="box"><span class="tag ai">AI · the conversation</span><p><b>The voice leg</b> is its own model (Gemini 2.5 Flash via Vapi): it picks the next scripted line, never composes one, and hangs up with a tool call. Answers are extracted to yes / no / unclear; hesitation is timed from the transcript.</p></div>
+    <div class="box"><span class="tag det">human in the loop</span><p><b>Analyst override</b> on the fraud desk: release or block, with a reason. Recorded <i>beside</i> the agent's verdict, never over it — so the bank can ask how often it overrules the agent, and whether it was right.</p></div>
+    <div class="box"><span class="tag det">audit</span><p><b>Every</b> CAMARA call, every decision, every call transcript and every override is persisted. A cached response is always labelled cached. A demo persona that draws on several sandbox numbers says so on screen.</p></div>
+  </div>
+</div></body></html>

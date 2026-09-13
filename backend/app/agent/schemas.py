@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.agent.channels import ChannelAssessment
 from app.db.models import DecisionOutcome
 
 
@@ -97,3 +98,9 @@ class RiskDecision(BaseModel):
 
     We take the more cautious of the two and record that we did, rather than silently
     preferring one. A judge asking "what if the model is wrong?" gets a real answer."""
+
+    channels: "ChannelAssessment | None" = None
+    """Which routes to the customer the network still vouches for, and which it does not.
+
+    None when no channel-bearing signal was pulled — on an approved payment we have no
+    reason to ask, and inventing an answer would be worse than leaving it blank."""

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.risk_agent import evaluate
+from app.agent.personas import get_persona
 from app.agent.schemas import TransactionContext
 from app.api.schemas import EvaluateRequest, EvaluateResponse
 from app.config import settings
@@ -67,10 +68,12 @@ async def evaluate_transaction(
         device_location_denied=payload.device_location_denied,
     )
 
+    persona = get_persona(payload.persona)
     decision = await evaluate(
         session, txn.id, context, expected_city=payload.expected_city,
         device_latitude=payload.device_latitude,
         device_longitude=payload.device_longitude,
+        persona=persona,
     )
 
     record = await record_decision(
@@ -81,6 +84,8 @@ async def evaluate_transaction(
         [step.model_dump(mode="json") for step in decision.reasoning_trace],
         decision.total_latency_ms,
         used_fallback=decision.used_fallback,
+        channel_assessment=(decision.channels.model_dump(mode="json")
+                            if decision.channels else None),
     )
     await session.commit()
 
@@ -97,6 +102,8 @@ async def evaluate_transaction(
         agent_mode=decision.agent_mode,
         disagreement=decision.disagreement,
         demo_seam=payload.customer_msisdn != signal_msisdn,
+        channels=decision.channels,
+        persona_seam=persona.seam_note() if persona else None,
     )
 
     # After the commit and outside the decision path: a dead dashboard must not be able

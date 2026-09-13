@@ -31,6 +31,37 @@ export interface DecisionRow {
   is_new_beneficiary: boolean;
   signals_pulled: number;
   voice_outcome: string | null;
+  analyst_action: AnalystAction | null;
+}
+
+export type AnalystAction = "released" | "blocked";
+
+export interface AnalystReview {
+  action: AnalystAction;
+  reason: string;
+  reviewed_at: string;
+}
+
+export type Channel = "voice" | "sms" | "app_push";
+
+export interface ChannelVerdict {
+  channel: Channel;
+  trusted: boolean;
+  reason: string;
+  blocked_by: string | null;
+  /** True when we never pulled the signal that would settle it. Unproven, not barred —
+   *  the two are rendered differently and must not be collapsed. */
+  evidence_missing: boolean;
+}
+
+export interface ChannelAssessment {
+  verdicts: ChannelVerdict[];
+  preferred: Channel | null;
+  strategy: string;
+  signals_used: string[];
+  /** Every route positively barred by a named signal. Not the same as `preferred` being
+   *  null, which also happens when nothing was checked. */
+  no_safe_channel: boolean;
 }
 
 export interface SignalCall {
@@ -76,6 +107,8 @@ export interface DecisionDetail {
     duration_s: number | null;
     is_mock: boolean;
   } | null;
+  channels: ChannelAssessment | null;
+  analyst_review: AnalystReview | null;
 }
 
 export class ApiError extends Error {}
@@ -97,6 +130,31 @@ export const listDecisions = (limit = 40) =>
   get<{ items: DecisionRow[]; total: number }>(`/decisions?limit=${limit}`);
 
 export const getDecision = (id: string) => get<DecisionDetail>(`/decisions/${id}`);
+
+/** Record what a human decided about a payment the agent had already ruled on.
+ *
+ *  Returns the decision as it now stands. The agent's outcome is unchanged by this —
+ *  the review is stored beside it, not over it. */
+export async function reviewDecision(
+  id: string,
+  action: AnalystAction,
+  reason: string
+): Promise<DecisionDetail> {
+  const response = await fetch(`${API_BASE}/decisions/${id}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, reason }),
+  });
+  if (!response.ok) {
+    // 409 is the real one: somebody already reviewed this. The server explains it
+    // better than we could, so pass its wording straight through.
+    const detail = await response.json().catch(() => null);
+    throw new ApiError(
+      detail?.detail ?? `The review could not be saved (${response.status}).`
+    );
+  }
+  return (await response.json()) as DecisionDetail;
+}
 
 export const getVoice = (transactionId: string) =>
   get<{
